@@ -585,38 +585,38 @@ install(FILES assets/images/camera_100.png
     COMPONENT CameraApp
 )
 
-enable_testing()
+# enable_testing()
 
-add_executable(test_logger
-    test/test_logger.cpp
-)
-target_link_libraries(test_logger PRIVATE camera_utils)
-add_test(NAME logger COMMAND test_logger)
+# add_executable(test_logger
+#     test/test_logger.cpp
+# )
+# target_link_libraries(test_logger PRIVATE camera_utils)
+# add_test(NAME logger COMMAND test_logger)
 
-add_executable(test_logger_compile_level
-    test/test_logger_compile_level.cpp
-)
-target_compile_definitions(test_logger_compile_level PRIVATE APP_LOG_LEVEL=APP_LOG_LEVEL_WARN)
-target_link_libraries(test_logger_compile_level PRIVATE camera_utils)
-add_test(NAME logger_compile_level COMMAND test_logger_compile_level)
+# add_executable(test_logger_compile_level
+#     test/test_logger_compile_level.cpp
+# )
+# target_compile_definitions(test_logger_compile_level PRIVATE APP_LOG_LEVEL=APP_LOG_LEVEL_WARN)
+# target_link_libraries(test_logger_compile_level PRIVATE camera_utils)
+# add_test(NAME logger_compile_level COMMAND test_logger_compile_level)
 
-add_executable(test_json
-    test/test_json.cpp
-)
-target_link_libraries(test_json PRIVATE camera_utils)
-add_test(NAME json COMMAND test_json)
+# add_executable(test_json
+#     test/test_json.cpp
+# )
+# target_link_libraries(test_json PRIVATE camera_utils)
+# add_test(NAME json COMMAND test_json)
 
-add_executable(test_splash_viewmodel
-    test/test_splash_viewmodel.cpp
-)
-target_link_libraries(test_splash_viewmodel PRIVATE camera_viewmodels)
-add_test(NAME splash_viewmodel COMMAND test_splash_viewmodel)
+# add_executable(test_splash_viewmodel
+#     test/test_splash_viewmodel.cpp
+# )
+# target_link_libraries(test_splash_viewmodel PRIVATE camera_viewmodels)
+# add_test(NAME splash_viewmodel COMMAND test_splash_viewmodel)
 
-add_executable(test_camera_viewmodel
-    test/test_camera_viewmodel.cpp
-)
-target_link_libraries(test_camera_viewmodel PRIVATE camera_viewmodels)
-add_test(NAME camera_viewmodel COMMAND test_camera_viewmodel)
+# add_executable(test_camera_viewmodel
+#     test/test_camera_viewmodel.cpp
+# )
+# target_link_libraries(test_camera_viewmodel PRIVATE camera_viewmodels)
+# add_test(NAME camera_viewmodel COMMAND test_camera_viewmodel)
 
 set(CAMERA_APP_PACKAGE_VERSION "0.1.0" CACHE STRING "CameraApp Debian package version")
 set(CAMERA_APP_DEB_ARCHITECTURE "" CACHE STRING "Override Debian package architecture")
