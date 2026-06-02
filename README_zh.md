@@ -1,10 +1,10 @@
 # CameraApp
 
-CameraApp is an embedded Linux camera application built with LVGL 9 and CMake. It is designed for M5CardputerZero / CM0 and integrates with APPLaunch. The application is installed as a standalone executable and also provides an APPLaunch `.desktop` entry, launcher icon, fonts, and audio assets.
+CameraApp 是一个基于 LVGL 9 / CMake 的 embedded Linux 相机应用，主要面向 M5CardputerZero / CM0 的 APPLaunch 集成使用。应用本身会安装为独立程序，同时提供 APPLaunch 的 `.desktop` 入口、图标、字体和音效资源。
 
-## Directory Layout
+## 目录约定
 
-Keep this project inside the full workspace when possible:
+当前工程推荐保持在完整 workspace 中：
 
 ```text
 debian_workspace/
@@ -13,15 +13,15 @@ debian_workspace/
     └── CameraApp/
 ```
 
-If the SDK is not in the default location, set it explicitly:
+如果 SDK 不在默认位置，可以手动指定：
 
 ```bash
 export SDK_PATH=/path/to/M5CardputerZero-Launcher/SDK
 ```
 
-## Debian Environment Setup
+## Debian 环境准备
 
-### 1. Base Tools
+### 1. 基础工具
 
 ```bash
 sudo apt update
@@ -33,11 +33,11 @@ sudo apt install -y \
   dpkg-dev
 ```
 
-`dpkg-dev` provides `dpkg-deb`, which is required to generate Debian packages.
+`dpkg-dev` 提供 `dpkg-deb`，用于生成 Debian 包。
 
-### 2. Desktop Preview Dependencies
+### 2. Desktop 本地预览依赖
 
-Desktop mode is used for local SDL/LVGL preview. It does not enable the CM0 Linux framebuffer/DRM, libcamera, or ALSA cross dependencies.
+Desktop 模式用于本机 SDL/LVGL 预览，不会启用 CM0 的 Linux framebuffer/DRM、libcamera 和 ALSA 交叉依赖。
 
 ```bash
 sudo apt install -y \
@@ -47,16 +47,16 @@ sudo apt install -y \
   zlib1g-dev
 ```
 
-### 3. CM0 / arm64 Cross-Compile Dependencies
+### 3. CM0 / arm64 交叉编译依赖
 
-If you are cross-compiling arm64 from Debian x86_64, enable arm64 multiarch first:
+如果在 Debian x86_64 上交叉编译 arm64，需要先开启 arm64 multiarch：
 
 ```bash
 sudo dpkg --add-architecture arm64
 sudo apt update
 ```
 
-Then install the cross compiler and arm64 dependencies:
+然后安装交叉编译器和 arm64 依赖：
 
 ```bash
 sudo apt install -y \
@@ -71,17 +71,17 @@ sudo apt install -y \
   libcamera-dev:arm64
 ```
 
-CameraApp currently targets libcamera `0.7+`. If your Debian repository does not provide a recent enough libcamera package, use a target-board sysroot or the project-local `static_lib/usr` directory, then pass it to CMake or the packaging script:
+CameraApp 目前按 libcamera `0.7+` 配置。如果当前 Debian 源没有足够新的 libcamera，可以使用目标板 sysroot 或工程内 `static_lib/usr`，并在 CMake 或打包脚本中传入：
 
 ```bash
 -DCM0_SYSROOT_HINT=/path/to/sysroot/usr
 ```
 
-## CMake Build
+## CMake 编译
 
-The commands below do not build test targets. They are suitable for source packages that do not include the `test/` directory.
+以下命令不包含 test 目标，适合只上传应用源码、不上传 `test/` 目录的场景。
 
-### Desktop Build
+### Desktop 编译
 
 ```bash
 cd /path/to/debian_workspace/projects/CameraApp
@@ -89,13 +89,13 @@ cmake -S . -B build-desktop-local -DUSE_DESKTOP=ON
 cmake --build build-desktop-local --target camera_app --parallel 4
 ```
 
-Run the desktop build:
+运行 desktop 版本：
 
 ```bash
 ./build-desktop-local/camera_app
 ```
 
-### CM0 / arm64 Build
+### CM0 / arm64 编译
 
 ```bash
 cd /path/to/debian_workspace/projects/CameraApp
@@ -103,7 +103,7 @@ cmake -S . -B build-cm0-local -DUSE_DESKTOP=OFF
 cmake --build build-cm0-local --target camera_app --parallel 4
 ```
 
-Specify a sysroot explicitly if needed:
+如果需要显式指定 sysroot：
 
 ```bash
 cmake -S . -B build-cm0-local \
@@ -112,7 +112,7 @@ cmake -S . -B build-cm0-local \
 cmake --build build-cm0-local --target camera_app --parallel 4
 ```
 
-If the build directory was generated on another machine or through a different mount path, CMake may report a source/cache path mismatch. Regenerate the build directory in that case:
+如果当前构建目录来自另一台机器或另一条挂载路径，CMake 可能报 source/cache 路径不匹配。此时重新生成构建目录：
 
 ```bash
 rm -rf build-cm0-local
@@ -120,22 +120,22 @@ cmake -S . -B build-cm0-local -DUSE_DESKTOP=OFF
 cmake --build build-cm0-local --target camera_app --parallel 4
 ```
 
-## Debian Packaging
+## Debian 打包
 
-Use the repository packaging script. It builds `camera_app`, stages the installed files, and then generates a `.deb` with `dpkg-deb`.
+推荐使用仓库内脚本打包，它会先构建 `camera_app`，然后 staging 安装文件，最后用 `dpkg-deb` 生成 `.deb`。
 
 ```bash
 cd /path/to/debian_workspace/projects/CameraApp
 CLEAN_BUILD=1 ./package_deb.sh
 ```
 
-Default output:
+默认输出：
 
 ```text
 dist/CameraApp_0.1.0_m5stack1_arm64.deb
 ```
 
-Optional parameters:
+可选参数：
 
 ```bash
 PACKAGE_VERSION=0.1.1 ./package_deb.sh
@@ -145,13 +145,13 @@ CM0_SYSROOT_HINT=/path/to/sysroot/usr ./package_deb.sh
 CAMERA_APP_USE_DRM=OFF CAMERA_APP_USE_ALSA=OFF ./package_deb.sh
 ```
 
-Inspect the package contents:
+检查包内容：
 
 ```bash
 dpkg-deb -c dist/CameraApp_0.1.0_m5stack1_arm64.deb
 ```
 
-The package should contain at least these paths:
+至少应包含这些路径：
 
 ```text
 /usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
@@ -161,22 +161,22 @@ The package should contain at least these paths:
 /usr/share/CameraApp/assets/audio/...
 ```
 
-Install on the target board:
+在目标板安装：
 
 ```bash
 sudo apt install ./dist/CameraApp_0.1.0_m5stack1_arm64.deb
 ```
 
-Or copy the package to the target board and install it there:
+或者复制到目标板后安装：
 
 ```bash
 scp dist/CameraApp_0.1.0_m5stack1_arm64.deb pi@pi:~/
 ssh pi@pi 'sudo apt install ./CameraApp_0.1.0_m5stack1_arm64.deb'
 ```
 
-## Installed Asset Paths
+## 安装后的资源路径
 
-After package installation, the application uses these paths:
+打包安装后，应用使用以下路径：
 
 ```text
 /usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
@@ -186,7 +186,7 @@ After package installation, the application uses these paths:
 /usr/share/CameraApp/assets/audio
 ```
 
-You can override the asset root at runtime with an environment variable:
+运行时也可以通过环境变量覆盖 asset root：
 
 ```bash
 CAMERA_APP_ASSET_DIR=/custom/assets /usr/share/APPLaunch/bin/M5CardputerZero-CameraApp

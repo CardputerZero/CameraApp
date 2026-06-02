@@ -4,8 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-cm0-local}"
 CLEAN_BUILD="${CLEAN_BUILD:-0}"
-PACKAGE_NAME="${PACKAGE_NAME:-m5cardputerzero-camera}"
+PACKAGE_NAME="${PACKAGE_NAME:-CameraApp}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-0.1.0}"
+PACKAGE_SUFFIX="${PACKAGE_SUFFIX:-m5stack1}"
 DEB_ARCH="${DEB_ARCH:-arm64}"
 MAINTAINER="${MAINTAINER:-kane}"
 PARALLEL="${PARALLEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
@@ -100,7 +101,7 @@ Description: Camera application for M5CardputerZero APPLaunch
  Camera application, launcher entry, and runtime assets.
 EOF
 
-DEB_PATH="${DIST_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_${DEB_ARCH}.deb"
+DEB_PATH="${DIST_DIR}/${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_SUFFIX}_${DEB_ARCH}.deb"
 dpkg-deb --build --root-owner-group "${STAGE_DIR}" "${DEB_PATH}"
 
 echo "Generated Debian package: ${DEB_PATH}"
