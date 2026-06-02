@@ -1,0 +1,29 @@
+# Mac
+.DS_Store
+._*
+
+# build
+build
+build-*
+dist
+
+# test
+test
+
+# utility script
+clean-double.sh
+deploy.sh
+
+# clang
+.clangd
+
+# third_party
+# since we are using BSP
+# this folder is for reference only
+third_party
+
+# bsp related
+static_lib
+
+# TODO
+TODO
