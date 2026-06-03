@@ -55,6 +55,8 @@ private:
     lv_obj_t* dialog_confirm_btn_{nullptr};
     lv_obj_t* info_scrim_{nullptr};
     lv_obj_t* info_panel_{nullptr};
+    lv_obj_t* info_panel_title_{nullptr};
+    lv_obj_t* info_panel_content_{nullptr};
     lv_obj_t* info_body_label_{nullptr};
     lv_obj_t* info_hint_label_{nullptr};
 

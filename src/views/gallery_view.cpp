@@ -33,6 +33,9 @@ constexpr int32_t kGuideLineHeight  = 6;
 constexpr int32_t kPreviewFitWidth  = 320;
 constexpr int32_t kPreviewFitHeight = 170;
 constexpr int32_t kInfoScrollStep   = 26;
+constexpr int32_t kInfoPanelWidth   = 244;
+constexpr int32_t kInfoPanelHeight  = 165;
+constexpr int32_t kInfoTitleHeight  = 28;
 
 void style_transparent_container(lv_obj_t* obj)
 {
@@ -364,37 +367,52 @@ void GalleryView::build_info_overlay_()
     lv_obj_clear_flag(info_scrim_, LV_OBJ_FLAG_SCROLLABLE);
 
     info_panel_ = lv_obj_create(info_scrim_);
-    lv_obj_set_size(info_panel_, 244, 165);
+    lv_obj_set_size(info_panel_, kInfoPanelWidth, kInfoPanelHeight);
     lv_obj_set_style_bg_color(info_panel_, lv_color_hex(color::DARK_SURFACECONTAINERHIGH), 0);
     lv_obj_set_style_bg_opa(info_panel_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(info_panel_, lv_color_hex(color::DARK_OUTLINEVARIANT), 0);
     lv_obj_set_style_border_width(info_panel_, 1, 0);
     lv_obj_set_style_radius(info_panel_, 8, 0);
     lv_obj_set_style_pad_all(info_panel_, 10, 0);
-    lv_obj_add_flag(info_panel_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(info_panel_, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(info_panel_, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(info_panel_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(info_panel_, LV_ALIGN_TOP_MID, 0, 0);
 
-    lv_obj_t* title = lv_label_create(info_panel_);
+    info_panel_title_ = lv_obj_create(info_panel_);
+    lv_obj_set_size(info_panel_title_, LV_PCT(100), kInfoTitleHeight);
+    style_transparent_container(info_panel_title_);
+    lv_obj_align(info_panel_title_, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t* title = lv_label_create(info_panel_title_);
     lv_obj_set_style_text_font(title, Font::inter_bold(15), 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_label_set_text(title, "Photo info");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    info_hint_label_ = lv_label_create(info_panel_);
+    info_hint_label_ = lv_label_create(info_panel_title_);
     lv_obj_set_style_text_font(info_hint_label_, Font::inter_semibold(10), 0);
     lv_obj_set_style_text_color(info_hint_label_, lv_color_hex(color::DARK_ONSURFACEVARIANT), 0);
     lv_label_set_text(info_hint_label_, "ESC back");
     lv_obj_align(info_hint_label_, LV_ALIGN_TOP_RIGHT, 0, 2);
 
-    info_body_label_ = lv_label_create(info_panel_);
+    info_panel_content_ = lv_obj_create(info_panel_);
+    lv_obj_set_size(info_panel_content_, LV_PCT(100), kInfoPanelHeight - kInfoTitleHeight - 20);
+    style_transparent_container(info_panel_content_);
+    lv_obj_add_flag(info_panel_content_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(info_panel_content_,
+                      static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLL_ELASTIC |
+                                                 LV_OBJ_FLAG_SCROLL_MOMENTUM |
+                                                 LV_OBJ_FLAG_SCROLL_CHAIN));
+    lv_obj_set_scroll_dir(info_panel_content_, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(info_panel_content_, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_align(info_panel_content_, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    info_body_label_ = lv_label_create(info_panel_content_);
     lv_obj_set_style_text_font(info_body_label_, Font::inter_regular(11), 0);
     lv_obj_set_style_text_color(info_body_label_, lv_color_hex(color::DARK_ONSURFACEVARIANT), 0);
     lv_obj_set_width(info_body_label_, 224);
     lv_label_set_long_mode(info_body_label_, LV_LABEL_LONG_WRAP);
     lv_label_set_text(info_body_label_, "");
-    lv_obj_align(info_body_label_, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_obj_align(info_body_label_, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_add_flag(info_scrim_, LV_OBJ_FLAG_HIDDEN);
 }
@@ -499,16 +517,16 @@ void GalleryView::update_delete_choice_(int32_t choice)
 
 void GalleryView::update_info_scroll_(int32_t delta)
 {
-    if (!info_panel_) {
+    if (!info_panel_content_) {
         return;
     }
 
     if (delta == 0) {
-        lv_obj_scroll_to_y(info_panel_, 0, LV_ANIM_OFF);
+        lv_obj_scroll_to_y(info_panel_content_, 0, LV_ANIM_OFF);
         return;
     }
 
-    lv_obj_scroll_by(info_panel_, 0, -delta * kInfoScrollStep, LV_ANIM_ON);
+    lv_obj_scroll_by_bounded(info_panel_content_, 0, -delta * kInfoScrollStep, LV_ANIM_ON);
 }
 
 } // namespace view
