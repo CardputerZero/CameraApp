@@ -26,7 +26,7 @@ namespace font = ui::font;
 namespace {
 
 constexpr int32_t kBottomBarHeight  = 36;
-constexpr int32_t kActionLiftY      = -3;
+constexpr int32_t kActionLiftY      = -9;
 constexpr int32_t kGuideLineHeight  = 7;
 constexpr int32_t kPreviewFitWidth  = 320;
 constexpr int32_t kPreviewFitHeight = 170;
@@ -331,7 +331,7 @@ void GalleryView::build_key_action_(const char* key_icon,
     lv_obj_set_style_radius(guide_line, 1, 0);
     lv_obj_set_style_pad_all(guide_line, 0, 0);
     lv_obj_clear_flag(guide_line, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align_to(guide_line, key, LV_ALIGN_OUT_BOTTOM_MID, 0, 1);
+    lv_obj_align_to(guide_line, key, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 }
 
 void GalleryView::set_observed_image_path(lv_obj_t* image, const char* path)

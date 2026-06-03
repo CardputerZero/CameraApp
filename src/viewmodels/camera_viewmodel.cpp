@@ -84,8 +84,10 @@ bool CameraViewModel::handle_action(app::AppAction action)
         action == app::AppAction::PanLeft ||
         action == app::AppAction::PanRight) {
         if (services_ && services_->camera) {
-            const int dx = action == app::AppAction::PanLeft ? -1 : (action == app::AppAction::PanRight ? 1 : 0);
-            const int dy = action == app::AppAction::PanUp ? -1 : (action == app::AppAction::PanDown ? 1 : 0);
+            // The sensor feed is displayed rotated 180 degrees, so visible pan directions
+            // map to the opposite crop movement in sensor coordinates.
+            const int dx = action == app::AppAction::PanLeft ? 1 : (action == app::AppAction::PanRight ? -1 : 0);
+            const int dy = action == app::AppAction::PanUp ? 1 : (action == app::AppAction::PanDown ? -1 : 0);
             services_->camera->pan(dx, dy);
         }
         return true;

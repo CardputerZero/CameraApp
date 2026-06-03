@@ -167,8 +167,12 @@ void CameraView::set_zoom_state(const service::CameraZoomState& state)
     const int32_t viewport_h = std::max<int32_t>(6, inner_h * 100 / state.zoom_percent);
     const int32_t max_x = std::max<int32_t>(0, inner_w - viewport_w);
     const int32_t max_y = std::max<int32_t>(0, inner_h - viewport_h);
-    const int32_t x = kZoomNavigatorPadding + max_x * std::max(0, std::min(100, state.view_x_percent)) / 100;
-    const int32_t y = kZoomNavigatorPadding + max_y * std::max(0, std::min(100, state.view_y_percent)) / 100;
+    const int32_t view_x = std::max(0, std::min(100, state.view_x_percent));
+    const int32_t view_y = std::max(0, std::min(100, state.view_y_percent));
+    const int32_t display_view_x = 100 - view_x;
+    const int32_t display_view_y = 100 - view_y;
+    const int32_t x = kZoomNavigatorPadding + max_x * display_view_x / 100;
+    const int32_t y = kZoomNavigatorPadding + max_y * display_view_y / 100;
 
     lv_obj_set_size(zoom_viewport_, viewport_w, viewport_h);
     lv_obj_align(zoom_viewport_, LV_ALIGN_TOP_LEFT, x, y);
