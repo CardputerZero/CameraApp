@@ -70,8 +70,8 @@ inline constexpr const char* ICON_VIDEO_CAMERA          = "\uEA27";
 inline constexpr const char* ICON_VOLUME_HIGH           = "\uEA28";
 inline constexpr const char* ICON_VOLUME_LOW            = "\uEA29";
 inline constexpr const char* ICON_VOLUME_X              = "\uEA2A";
-inline constexpr const char* ICON_ZOOM_IN               = "\uEA2B";
-inline constexpr const char* ICON_ZOOM_OUT              = "\uEA2C";
+inline constexpr const char* ICON_ZOOM_OUT              = "\uEA2B";
+inline constexpr const char* ICON_ZOOM_IN              = "\uEA2C";
 
 enum class InterWeight {
     Regular,

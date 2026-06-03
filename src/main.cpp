@@ -234,7 +234,10 @@ void setup_screen_manager(screen::ScreenManager& manager,
                    viewmodel->status_subject(),
                    viewmodel->empty_visible_subject(),
                    viewmodel->confirm_delete_subject(),
-                   viewmodel->delete_choice_subject());
+                   viewmodel->delete_choice_subject(),
+                   viewmodel->info_visible_subject(),
+                   viewmodel->info_text_subject(),
+                   viewmodel->info_scroll_subject());
         return std::make_shared<screen::Screen>(parent, std::move(view), viewmodel);
     });
 }
@@ -339,6 +342,39 @@ int main() {
 
     bool running = true;
     auto dispatch_app_action = [&running, &manager, &services](app::AppAction action) {
+        auto current = manager.current_screen();
+        const bool is_camera_screen =
+            current &&
+            std::dynamic_pointer_cast<viewmodel::CameraViewModel>(current->viewmodel()) != nullptr;
+        if (is_camera_screen) {
+            if (action == app::AppAction::ZoomOut) {
+                action = app::AppAction::Exit;
+            } else if (action == app::AppAction::ZoomIn) {
+                action = app::AppAction::ZoomOut;
+            } else if (action == app::AppAction::OpenGallery) {
+                action = app::AppAction::ZoomIn;
+            } else if (action == app::AppAction::ToggleCaptureMode) {
+                action = app::AppAction::OpenGallery;
+            }
+        }
+
+        const bool is_gallery_screen =
+            current &&
+            std::dynamic_pointer_cast<viewmodel::GalleryViewModel>(current->viewmodel()) != nullptr;
+        if (is_gallery_screen) {
+            if (action == app::AppAction::ZoomOut) {
+                action = app::AppAction::Exit;
+            } else if (action == app::AppAction::ZoomIn) {
+                action = app::AppAction::PanLeft;
+            } else if (action == app::AppAction::Capture) {
+                action = app::AppAction::ShowInfo;
+            } else if (action == app::AppAction::OpenGallery) {
+                action = app::AppAction::PanRight;
+            } else if (action == app::AppAction::ToggleCaptureMode) {
+                action = app::AppAction::Delete;
+            }
+        }
+
         if (action == app::AppAction::Exit) {
             if (dispatch_action(manager, services, action)) {
                 return;

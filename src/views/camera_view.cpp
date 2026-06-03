@@ -108,16 +108,16 @@ void CameraView::build_()
 
     build_bottom_container_();
 
+    /* create return icon button/keypad */
+    return_icon_ = build_icon_(32, font::ICON_ARROW_U_UP_LEFT, LV_ALIGN_LEFT_MID, 30);
     /* create zoom out icon button */
-    zoom_in_icon_ = build_icon_(32, font::ICON_ZOOM_IN, LV_ALIGN_LEFT_MID, 30);
-    /* create zoom in icon button */
     zoom_out_icon_ = build_icon_(32, font::ICON_ZOOM_OUT, LV_ALIGN_CENTER, -56);
     /* create shutter icon button */
     shutter_icon_ = build_icon_(32, font::ICON_SHUTTER, LV_ALIGN_CENTER, -3, true);
+    /* create zoom out icon button */
+    zoom_in_icon_ = build_icon_(32, font::ICON_ZOOM_IN, LV_ALIGN_CENTER, 56);
     /* create gallery icon button */
-    gallery_icon_ = build_icon_(32, font::ICON_IMAGES, LV_ALIGN_CENTER, 56);
-    /* create capture mode icon button/keypad */
-    capture_mode_icon_ = build_icon_(32, font::ICON_VIDEO_CAMERA_SWITCH, LV_ALIGN_RIGHT_MID, -30);
+    gallery_icon_ = build_icon_(32, font::ICON_IMAGES, LV_ALIGN_RIGHT_MID, -30);
 
     build_flash_overlay_();
 

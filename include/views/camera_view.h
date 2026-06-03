@@ -61,11 +61,11 @@ private:
     lv_obj_t* capture_status_label_{nullptr};
     lv_timer_t* capture_status_hide_timer_{nullptr};
 
+    IconKeypad return_icon_{};
     IconKeypad zoom_out_icon_{};
     IconKeypad zoom_in_icon_{};
     IconKeypad gallery_icon_{};
     IconKeypad shutter_icon_{};
-    IconKeypad capture_mode_icon_{};
 
     lv_obj_t *help_label_{nullptr};
     // bool shortcut_hints_visible_{false};

@@ -93,10 +93,6 @@ bool CameraViewModel::handle_action(app::AppAction action)
         return true;
     }
 
-    if (action == app::AppAction::ToggleCaptureMode) {
-        return true;
-    }
-
     return false;
 }
 

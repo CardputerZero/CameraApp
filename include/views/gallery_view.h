@@ -17,9 +17,13 @@ public:
               lv_subject_t* status_subject,
               lv_subject_t* empty_visible_subject,
               lv_subject_t* confirm_delete_subject,
-              lv_subject_t* delete_choice_subject);
+              lv_subject_t* delete_choice_subject,
+              lv_subject_t* info_visible_subject,
+              lv_subject_t* info_text_subject,
+              lv_subject_t* info_scroll_subject);
     void set_observed_image_path(lv_obj_t* image, const char* path);
     void update_delete_choice_(int32_t choice);
+    void update_info_scroll_(int32_t delta);
 
 private:
     void build_();
@@ -27,6 +31,7 @@ private:
     void build_top_bar_();
     void build_bottom_bar_();
     void build_delete_dialog_();
+    void build_info_overlay_();
     lv_obj_t* build_dialog_action_(lv_obj_t* parent,
                                    const char* text,
                                    const char* action_icon);
@@ -48,6 +53,10 @@ private:
     lv_obj_t* dialog_body_label_{nullptr};
     lv_obj_t* dialog_cancel_btn_{nullptr};
     lv_obj_t* dialog_confirm_btn_{nullptr};
+    lv_obj_t* info_scrim_{nullptr};
+    lv_obj_t* info_panel_{nullptr};
+    lv_obj_t* info_body_label_{nullptr};
+    lv_obj_t* info_hint_label_{nullptr};
 
     std::string lvgl_image_path_;
 };

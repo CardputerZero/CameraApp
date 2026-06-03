@@ -12,6 +12,7 @@ enum class AppAction {
     ZoomOut,
     ZoomIn,
     OpenGallery,
+    ShowInfo,
     ToggleCaptureMode,
     PanUp,
     PanDown,
