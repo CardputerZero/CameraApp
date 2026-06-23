@@ -27,16 +27,26 @@ CMAKE_ARGS=(
     "-DCAMERA_APP_USE_ALSA=${CAMERA_APP_USE_ALSA:-ON}"
     "-DCAMERA_APP_PACKAGE_VERSION=${PACKAGE_VERSION}"
     "-DCAMERA_APP_DEB_ARCHITECTURE=${DEB_ARCH}"
+    "-DCM0_ALLOW_MANUAL_LIBCAMERA_LOOKUP=${CM0_ALLOW_MANUAL_LIBCAMERA_LOOKUP:-OFF}"
     "-DLIBCAMERA_MIN_VERSION=${LIBCAMERA_MIN_VERSION:-0.7}"
 )
 
 if [[ -n "${CM0_SYSROOT_HINT:-}" ]]; then
     CMAKE_ARGS+=("-DCM0_SYSROOT_HINT=${CM0_SYSROOT_HINT}")
 fi
+if [[ -n "${CMAKE_SYSROOT:-}" ]]; then
+    CMAKE_ARGS+=("-DCMAKE_SYSROOT=${CMAKE_SYSROOT}")
+fi
 if [[ -n "${CAMERA_APP_DEB_DEPENDS:-}" ]]; then
     CMAKE_ARGS+=("-DCAMERA_APP_DEB_DEPENDS=${CAMERA_APP_DEB_DEPENDS}")
 fi
 
+for CACHE_DIR in build-desktop-local build-desktop; do
+    if [[ -d "${ROOT_DIR}/${CACHE_DIR}/_deps/lvgl" ]]; then
+        CMAKE_ARGS+=("-DFETCHCONTENT_SOURCE_DIR_LVGL=${ROOT_DIR}/${CACHE_DIR}/_deps/lvgl")
+        break
+    fi
+done
 for CACHE_DIR in build-desktop-local build-desktop; do
     if [[ -d "${ROOT_DIR}/${CACHE_DIR}/_deps/fmt-src" ]]; then
         CMAKE_ARGS+=("-DFETCHCONTENT_SOURCE_DIR_FMT=${ROOT_DIR}/${CACHE_DIR}/_deps/fmt-src")
@@ -80,10 +90,15 @@ fi
 rm -rf "${STAGE_DIR}"
 cmake --install "${BUILD_DIR}" --prefix "${STAGE_DIR}/usr" --component CameraApp
 
-# Keep this explicit copy so the Debian package cannot miss the launcher binary.
-install -Dm755 "${EXECUTABLE}" "${STAGE_DIR}/usr/share/APPLaunch/bin/M5CardputerZero-CameraApp"
-install -Dm644 "${ROOT_DIR}/assets/applications/camera.desktop" "${STAGE_DIR}/usr/share/APPLaunch/applications/camera.desktop"
-install -Dm644 "${ROOT_DIR}/assets/images/camera_100.png" "${STAGE_DIR}/usr/share/APPLaunch/share/images/camera_100.png"
+install -d "${STAGE_DIR}/usr/bin" \
+    "${STAGE_DIR}/usr/share/APPLaunch/applications" \
+    "${STAGE_DIR}/usr/share/APPLaunch/share/images"
+# Keep this fallback so the Debian package cannot miss the launcher binary.
+if [[ ! -x "${STAGE_DIR}/usr/bin/camera_app" ]]; then
+    install -m 755 "${EXECUTABLE}" "${STAGE_DIR}/usr/bin/camera_app"
+fi
+install -m 644 "${ROOT_DIR}/assets/applications/camera.desktop" "${STAGE_DIR}/usr/share/APPLaunch/applications/camera.desktop"
+install -m 644 "${ROOT_DIR}/assets/images/camera1.png" "${STAGE_DIR}/usr/share/APPLaunch/share/images/camera1.png"
 
 CONTROL_DIR="${STAGE_DIR}/DEBIAN"
 mkdir -p "${CONTROL_DIR}" "${DIST_DIR}"

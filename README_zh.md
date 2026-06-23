@@ -154,9 +154,9 @@ dpkg-deb -c dist/CameraApp_0.1.0_m5stack1_arm64.deb
 至少应包含这些路径：
 
 ```text
-/usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
+/usr/bin/camera_app
 /usr/share/APPLaunch/applications/camera.desktop
-/usr/share/APPLaunch/share/images/camera_100.png
+/usr/share/APPLaunch/share/images/camera1.png
 /usr/share/CameraApp/assets/fonts/...
 /usr/share/CameraApp/assets/audio/...
 ```
@@ -179,9 +179,9 @@ ssh pi@pi 'sudo apt install ./CameraApp_0.1.0_m5stack1_arm64.deb'
 打包安装后，应用使用以下路径：
 
 ```text
-/usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
+/usr/bin/camera_app
 /usr/share/APPLaunch/applications/camera.desktop
-/usr/share/APPLaunch/share/images/camera_100.png
+/usr/share/APPLaunch/share/images/camera1.png
 /usr/share/CameraApp/assets/fonts
 /usr/share/CameraApp/assets/audio
 ```
@@ -189,5 +189,5 @@ ssh pi@pi 'sudo apt install ./CameraApp_0.1.0_m5stack1_arm64.deb'
 运行时也可以通过环境变量覆盖 asset root：
 
 ```bash
-CAMERA_APP_ASSET_DIR=/custom/assets /usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
+CAMERA_APP_ASSET_DIR=/custom/assets /usr/bin/camera_app
 ```

@@ -35,7 +35,9 @@ endif()
 
 include(FetchContent)
 
-find_package(fmt CONFIG QUIET)
+if(USE_DESKTOP)
+    find_package(fmt CONFIG QUIET)
+endif()
 if(NOT TARGET fmt::fmt)
     set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
@@ -46,8 +48,13 @@ if(NOT TARGET fmt::fmt)
     )
     FetchContent_MakeAvailable(fmt)
 endif()
+if(DEFINED fmt_SOURCE_DIR)
+    include_directories(BEFORE "${fmt_SOURCE_DIR}/include")
+endif()
 
-find_package(cJSON CONFIG QUIET)
+if(USE_DESKTOP)
+    find_package(cJSON CONFIG QUIET)
+endif()
 if(TARGET cjson)
     set(CJSON_TARGET cjson)
 elseif(TARGET cJSON::cJSON)
@@ -319,6 +326,11 @@ else()
         HINTS ${CM0_LIBRARY_HINTS}
         PATH_SUFFIXES lib/aarch64-linux-gnu lib
     )
+    find_library(CM0_LIBC_RUNTIME_LIBRARY
+        NAMES libc.so.6
+        HINTS ${CM0_LIBRARY_HINTS}
+        PATH_SUFFIXES lib/aarch64-linux-gnu lib
+    )
 
     if(CAMERA_APP_USE_DRM AND NOT CAMERA_APP_DRM_AVAILABLE)
         message(FATAL_ERROR "libdrm headers/library not found. Install libdrm-dev:arm64, set CM0_SYSROOT_HINT, or configure with -DCAMERA_APP_USE_DRM=OFF.")
@@ -554,10 +566,22 @@ target_link_libraries(camera_app
         camera_input
 )
 
+if(NOT USE_DESKTOP)
+    if(CM0_LIBC_RUNTIME_LIBRARY)
+        target_link_libraries(camera_app PRIVATE "${CM0_LIBC_RUNTIME_LIBRARY}")
+    endif()
+    set_target_properties(camera_app PROPERTIES
+        SKIP_BUILD_RPATH TRUE
+        BUILD_WITH_INSTALL_RPATH FALSE
+        INSTALL_RPATH ""
+    )
+    target_link_options(camera_app PRIVATE -Wl,--allow-shlib-undefined)
+endif()
+
 include(GNUInstallDirs)
 install(PROGRAMS $<TARGET_FILE:camera_app>
-    DESTINATION share/APPLaunch/bin
-    RENAME M5CardputerZero-CameraApp
+    DESTINATION bin
+    RENAME camera_app
     COMPONENT CameraApp
 )
 
@@ -580,7 +604,7 @@ install(FILES assets/applications/camera.desktop
     COMPONENT CameraApp
 )
 
-install(FILES assets/images/camera_100.png
+install(FILES assets/images/camera1.png
     DESTINATION share/APPLaunch/share/images
     COMPONENT CameraApp
 )

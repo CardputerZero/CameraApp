@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=CAMERA
-Exec=/usr/share/APPLaunch/bin/M5CardputerZero-CameraApp
+Exec=/usr/bin/camera_app
 Terminal=false
-Icon=share/images/camera_100.png
+Icon=share/images/camera1.png
 Type=Application

@@ -14,6 +14,12 @@ test
 clean-double.sh
 deploy.sh
 
+# mutagen local sync configuration/state
+mutagen.*
+mutagen.*.yml
+.mutagen.yml
+.mutagen/
+
 # clang
 .clangd
 
