@@ -3,9 +3,9 @@
 ._*
 
 # build
-build
+build/
 build-*
-dist
+dist/
 
 # test
 test
@@ -13,6 +13,12 @@ test
 # utility script
 clean-double.sh
 deploy.sh
+
+# mutagen local sync configuration/state
+mutagen.*
+mutagen.*.yml
+.mutagen.yml
+.mutagen/
 
 # clang
 .clangd
@@ -24,6 +30,9 @@ third_party
 
 # bsp related
 static_lib
+
+# cache
+.cache/
 
 # TODO
 TODO
