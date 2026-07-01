@@ -1,64 +1,43 @@
 # CameraApp
 
-CameraApp is an embedded Linux camera application built with LVGL 9 and CMake. It is designed for M5CardputerZero / CM0 and integrates with APPLaunch. The application is installed as a standalone executable and also provides an APPLaunch `.desktop` entry, launcher icon, fonts, and audio assets.
+CameraApp is an embedded Linux camera application built with LVGL 9 and CMake. It targets M5CardputerZero / CM0 APPLaunch integration and installs a standalone executable, launcher entry, icon, fonts, and audio assets.
 
 ## Directory Layout
 
-Keep this project inside the full workspace when possible:
-
 ```text
-debian_workspace/
-├── SDK/
-└── projects/
-    └── CameraApp/
+CameraApp/
+├── src/
+│   ├── app/
+│   ├── config/
+│   ├── input/
+│   ├── services/
+│   ├── ui/
+│   ├── viewmodels/
+│   └── views/
+├── cmake/
+│   ├── templates/
+│   └── toolchains/
+├── assets/
+└── CMakePresets.json
 ```
 
-If the SDK is not in the default location, set it explicitly:
+CM0 cross builds use `cmake/toolchains/cp0-aarch64-linux-gnu.cmake`. The default sysroot location is `.cache/sdk_bsp-src`.
 
-```bash
-export SDK_PATH=/path/to/M5CardputerZero-Launcher/SDK
-```
+## Dependencies
 
-## Debian Environment Setup
-
-### 1. Base Tools
-
-```bash
-sudo apt update
-sudo apt install -y \
-  build-essential \
-  cmake \
-  git \
-  pkg-config \
-  dpkg-dev
-```
-
-`dpkg-dev` provides `dpkg-deb`, which is required to generate Debian packages.
-
-### 2. Desktop Preview Dependencies
-
-Desktop mode is used for local SDL/LVGL preview. It does not enable the CM0 Linux framebuffer/DRM, libcamera, or ALSA cross dependencies.
+Desktop preview uses SDL/LVGL and does not enable the CM0 framebuffer/DRM, libcamera, or ALSA runtime backends.
 
 ```bash
 sudo apt install -y \
-  libsdl2-dev \
-  libfreetype-dev \
-  libpng-dev \
-  zlib1g-dev
+  build-essential cmake git pkg-config dpkg-dev \
+  libsdl2-dev libfreetype-dev libpng-dev libjpeg-dev zlib1g-dev
 ```
 
-### 3. CM0 / arm64 Cross-Compile Dependencies
-
-If you are cross-compiling arm64 from Debian x86_64, enable arm64 multiarch first:
+For CM0 / arm64 cross builds, all CameraApp dependencies are required except DRM. fbdev is the default display backend; enable DRM only with `-DAPP_USE_DRM=ON`.
 
 ```bash
 sudo dpkg --add-architecture arm64
 sudo apt update
-```
-
-Then install the cross compiler and arm64 dependencies:
-
-```bash
 sudo apt install -y \
   gcc-aarch64-linux-gnu \
   g++-aarch64-linux-gnu \
@@ -66,127 +45,80 @@ sudo apt install -y \
   libpng-dev:arm64 \
   libjpeg-dev:arm64 \
   zlib1g-dev:arm64 \
-  libdrm-dev:arm64 \
   libasound2-dev:arm64 \
-  libcamera-dev:arm64
+  libcamera-dev:arm64 \
+  libfmt-dev:arm64 \
+  libcjson-dev:arm64
 ```
 
-CameraApp currently targets libcamera `0.7+`. If your Debian repository does not provide a recent enough libcamera package, use a target-board sysroot or the project-local `static_lib/usr` directory, then pass it to CMake or the packaging script:
+Install `libdrm-dev:arm64` only when building with `APP_USE_DRM=ON`.
+
+## Build
+
+Desktop:
 
 ```bash
--DCM0_SYSROOT_HINT=/path/to/sysroot/usr
+cmake --preset linux-x86-64
+cmake --build --preset linux-x86-64-rel
+./build/linux-x86-64/Release/camera_app
 ```
 
-## CMake Build
-
-The commands below do not build test targets. They are suitable for source packages that do not include the `test/` directory.
-
-### Desktop Build
+CM0 / arm64:
 
 ```bash
-cd /path/to/debian_workspace/projects/CameraApp
-cmake -S . -B build-desktop-local -DUSE_DESKTOP=ON
-cmake --build build-desktop-local --target camera_app --parallel 4
+cmake --preset cp0-cross
+cmake --build --preset cp0-cross-rel
 ```
 
-Run the desktop build:
+With an explicit sysroot:
 
 ```bash
-./build-desktop-local/camera_app
-```
-
-### CM0 / arm64 Build
-
-```bash
-cd /path/to/debian_workspace/projects/CameraApp
-cmake -S . -B build-cm0-local -DUSE_DESKTOP=OFF
-cmake --build build-cm0-local --target camera_app --parallel 4
-```
-
-Specify a sysroot explicitly if needed:
-
-```bash
-cmake -S . -B build-cm0-local \
+cmake -S . -B build/cp0-cross \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/cp0-aarch64-linux-gnu.cmake \
   -DUSE_DESKTOP=OFF \
-  -DCM0_SYSROOT_HINT=/path/to/sysroot/usr
-cmake --build build-cm0-local --target camera_app --parallel 4
+  -DCM0_SDK_ROOT=/path/to/sysroot \
+  -DCMAKE_SYSROOT=/path/to/sysroot
+cmake --build build/cp0-cross --config Release --target camera_app --parallel 4
 ```
 
-If the build directory was generated on another machine or through a different mount path, CMake may report a source/cache path mismatch. Regenerate the build directory in that case:
+Enable DRM/KMS display backend:
 
 ```bash
-rm -rf build-cm0-local
-cmake -S . -B build-cm0-local -DUSE_DESKTOP=OFF
-cmake --build build-cm0-local --target camera_app --parallel 4
+cmake --preset cp0-cross -DAPP_USE_DRM=ON
 ```
 
-## Debian Packaging
-
-Use the repository packaging script. It builds `camera_app`, stages the installed files, and then generates a `.deb` with `dpkg-deb`.
+## Debian Package
 
 ```bash
-cd /path/to/debian_workspace/projects/CameraApp
-CLEAN_BUILD=1 ./package_deb.sh
+./package_deb.sh
 ```
 
 Default output:
 
 ```text
-dist/CameraApp_0.1.0_m5stack1_arm64.deb
+dist/CameraApp_0.2.0_m5stack1_arm64.deb
 ```
 
-Optional parameters:
+Useful overrides:
 
 ```bash
-PACKAGE_VERSION=0.1.1 ./package_deb.sh
-PACKAGE_SUFFIX=m5stack1 ./package_deb.sh
-DEB_ARCH=arm64 ./package_deb.sh
-CM0_SYSROOT_HINT=/path/to/sysroot/usr ./package_deb.sh
-CAMERA_APP_USE_DRM=OFF CAMERA_APP_USE_ALSA=OFF ./package_deb.sh
+./package_deb.sh -DAPP_USE_DRM=ON
+./package_deb.sh -DCM0_SDK_ROOT=/path/to/sysroot -DCMAKE_SYSROOT=/path/to/sysroot
 ```
 
-Inspect the package contents:
-
-```bash
-dpkg-deb -c dist/CameraApp_0.1.0_m5stack1_arm64.deb
-```
-
-The package should contain at least these paths:
+The package should contain at least:
 
 ```text
 /usr/bin/camera_app
-/usr/share/APPLaunch/applications/camera.desktop
+/usr/share/APPLaunch/applications/camera_app.desktop
 /usr/share/APPLaunch/share/images/camera1.png
+/usr/share/camera_app/fonts/...
+/usr/share/camera_app/audio/...
 /usr/share/CameraApp/assets/fonts/...
 /usr/share/CameraApp/assets/audio/...
 ```
 
-Install on the target board:
-
-```bash
-sudo apt install ./dist/CameraApp_0.1.0_m5stack1_arm64.deb
-```
-
-Or copy the package to the target board and install it there:
-
-```bash
-scp dist/CameraApp_0.1.0_m5stack1_arm64.deb pi@pi:~/
-ssh pi@pi 'sudo apt install ./CameraApp_0.1.0_m5stack1_arm64.deb'
-```
-
-## Installed Asset Paths
-
-After package installation, the application uses these paths:
-
-```text
-/usr/bin/camera_app
-/usr/share/APPLaunch/applications/camera.desktop
-/usr/share/APPLaunch/share/images/camera1.png
-/usr/share/CameraApp/assets/fonts
-/usr/share/CameraApp/assets/audio
-```
-
-You can override the asset root at runtime with an environment variable:
+Runtime asset root can still be overridden with:
 
 ```bash
 CAMERA_APP_ASSET_DIR=/custom/assets /usr/bin/camera_app

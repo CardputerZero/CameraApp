@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=CAMERA
-Exec=/usr/bin/camera_app
-Terminal=false
-Icon=share/images/camera1.png
-Type=Application

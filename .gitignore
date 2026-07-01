@@ -3,9 +3,9 @@
 ._*
 
 # build
-build
+build/
 build-*
-dist
+dist/
 
 # test
 test
@@ -30,6 +30,9 @@ third_party
 
 # bsp related
 static_lib
+
+# cache
+.cache/
 
 # TODO
 TODO
