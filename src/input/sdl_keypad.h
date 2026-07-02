@@ -35,6 +35,7 @@ class SdlKeypad {
   bool zoom_in_pressed_{false};
   bool gallery_pressed_{false};
   bool mode_pressed_{false};
+  bool camera_backend_pressed_{false};
   bool pan_up_pressed_{false};
   bool pan_down_pressed_{false};
   bool pan_left_pressed_{false};

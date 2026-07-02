@@ -12,6 +12,7 @@ namespace service {
 class CameraInterface;
 
 enum class CameraServiceState { Idle, Starting, Ready, Error };
+enum class CameraBackendPreference { Auto, Csi, Usb };
 
 struct CameraFrame {
   int width{0};
@@ -47,6 +48,10 @@ class CameraService : public BaseService {
   std::string status_message() const override { return status_message_; }
 
   void set_startup_delay(uint32_t delay_ms) { startup_delay_ms_ = delay_ms; }
+  CameraBackendPreference backend_preference() const { return backend_preference_; }
+  std::string active_backend_name() const;
+  void set_backend_preference(CameraBackendPreference preference);
+  CameraBackendPreference toggle_backend_preference();
   bool consume_frame(CameraFrame& frame);
   bool request_capture();
   bool start_video_recording(int fps = 15, int quality = 80);
@@ -70,6 +75,7 @@ class CameraService : public BaseService {
   uint32_t startup_delay_ms_{1000};
   std::string status_message_{"Camera idle"};
   std::unique_ptr<CameraInterface> backend_;
+  CameraBackendPreference backend_preference_{CameraBackendPreference::Csi};
   CameraFrame latest_frame_;
   bool new_frame_{false};
   bool preview_ready_{false};

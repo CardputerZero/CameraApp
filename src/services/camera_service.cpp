@@ -20,10 +20,17 @@ namespace {
 using namespace camera_backend;
 
 #if !USE_DESKTOP
-std::vector<std::unique_ptr<CameraInterface>> create_backend_candidates() {
+std::vector<std::unique_ptr<CameraInterface>> create_backend_candidates(
+    CameraBackendPreference preference) {
   std::vector<std::unique_ptr<CameraInterface>> backends;
-  backends.push_back(std::make_unique<LibcameraBackend>());
-  backends.push_back(std::make_unique<V4l2Backend>());
+  if (preference == CameraBackendPreference::Usb) {
+    backends.push_back(std::make_unique<V4l2Backend>());
+  } else if (preference == CameraBackendPreference::Csi) {
+    backends.push_back(std::make_unique<LibcameraBackend>());
+  } else {
+    backends.push_back(std::make_unique<LibcameraBackend>());
+    backends.push_back(std::make_unique<V4l2Backend>());
+  }
   return backends;
 }
 #endif
@@ -41,7 +48,7 @@ void CameraService::ensure_impl_() {
   }
 
   std::string errors;
-  auto backends = create_backend_candidates();
+  auto backends = create_backend_candidates(backend_preference_);
   for (auto& backend : backends) {
     backend->set_capture_resolution(capture_resolution_);
     backend->set_zoom_state(zoom_state_);
@@ -65,6 +72,42 @@ void CameraService::ensure_impl_() {
 
   status_message_ = errors.empty() ? "Camera unavailable" : "Camera unavailable: " + errors;
 #endif
+}
+
+std::string CameraService::active_backend_name() const {
+#if USE_DESKTOP
+  return "desktop";
+#else
+  return backend_ ? backend_->backend_name() : "";
+#endif
+}
+
+void CameraService::set_backend_preference(CameraBackendPreference preference) {
+  if (backend_preference_ == preference && state_ == CameraServiceState::Idle && !backend_) {
+    return;
+  }
+
+  LOG_INFO("Camera backend preference set to {}",
+           preference == CameraBackendPreference::Usb
+               ? "usb"
+               : (preference == CameraBackendPreference::Csi ? "csi" : "auto"));
+  const bool was_active = state_ == CameraServiceState::Starting ||
+                          state_ == CameraServiceState::Ready ||
+                          state_ == CameraServiceState::Error || backend_ != nullptr;
+  if (was_active) {
+    stop();
+  }
+  backend_preference_ = preference;
+  status_message_ = preference == CameraBackendPreference::Usb   ? "Switching to USB camera..."
+                    : preference == CameraBackendPreference::Csi ? "Switching to CSI camera..."
+                                                                 : "Switching camera backend...";
+}
+
+CameraBackendPreference CameraService::toggle_backend_preference() {
+  const bool use_usb =
+      active_backend_name() != "v4l2" && backend_preference_ != CameraBackendPreference::Usb;
+  set_backend_preference(use_usb ? CameraBackendPreference::Usb : CameraBackendPreference::Csi);
+  return backend_preference_;
 }
 
 void CameraService::start() {

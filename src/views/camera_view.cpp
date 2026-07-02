@@ -34,7 +34,7 @@ constexpr uint32_t kShortcutHintStaggerMs      = 35;
 constexpr int32_t kBottomIconLiftY             = -6;
 constexpr int32_t kBottomIconGuideLineHeight   = 6;
 constexpr uint32_t kCaptureStatusVisibleMs     = 2800;
-constexpr int32_t kPreviewWidth                = 226;
+constexpr int32_t kPreviewWidth                = 320;
 constexpr int32_t kPreviewHeight               = 170;
 constexpr int32_t kZoomNavigatorWidth          = 64;
 constexpr int32_t kZoomNavigatorHeight         = 48;
@@ -261,8 +261,7 @@ void CameraView::build_preview_() {
   lv_obj_center(preview_container_);
 
   preview_image_ = lv_image_create(preview_container_);
-  lv_obj_set_size(preview_image_, LV_PCT(100), LV_PCT(100));
-  lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_STRETCH);
+  lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_CENTER);
   lv_obj_center(preview_image_);
 
   capture_status_label_ = lv_label_create(preview_container_);

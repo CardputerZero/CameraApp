@@ -19,14 +19,15 @@ void SdlKeypad::poll() {
   const bool capture_pressed = state[SDL_SCANCODE_6] != 0;
   const bool confirm_pressed = state[SDL_SCANCODE_RETURN] != 0 || state[SDL_SCANCODE_KP_ENTER] != 0;
   const bool delete_pressed = state[SDL_SCANCODE_DELETE] != 0 || state[SDL_SCANCODE_BACKSPACE] != 0;
-  const bool zoom_out_pressed  = state[SDL_SCANCODE_4] != 0;
-  const bool zoom_in_pressed   = state[SDL_SCANCODE_5] != 0;
-  const bool gallery_pressed   = state[SDL_SCANCODE_7] != 0;
-  const bool mode_pressed      = state[SDL_SCANCODE_8] != 0;
-  const bool pan_up_pressed    = state[SDL_SCANCODE_F] != 0 || state[SDL_SCANCODE_UP] != 0;
-  const bool pan_down_pressed  = state[SDL_SCANCODE_X] != 0 || state[SDL_SCANCODE_DOWN] != 0;
-  const bool pan_left_pressed  = state[SDL_SCANCODE_Z] != 0 || state[SDL_SCANCODE_LEFT] != 0;
-  const bool pan_right_pressed = state[SDL_SCANCODE_C] != 0 || state[SDL_SCANCODE_RIGHT] != 0;
+  const bool zoom_out_pressed       = state[SDL_SCANCODE_4] != 0;
+  const bool zoom_in_pressed        = state[SDL_SCANCODE_5] != 0;
+  const bool gallery_pressed        = state[SDL_SCANCODE_7] != 0;
+  const bool mode_pressed           = state[SDL_SCANCODE_8] != 0;
+  const bool camera_backend_pressed = state[SDL_SCANCODE_U] != 0;
+  const bool pan_up_pressed         = state[SDL_SCANCODE_F] != 0 || state[SDL_SCANCODE_UP] != 0;
+  const bool pan_down_pressed       = state[SDL_SCANCODE_X] != 0 || state[SDL_SCANCODE_DOWN] != 0;
+  const bool pan_left_pressed       = state[SDL_SCANCODE_Z] != 0 || state[SDL_SCANCODE_LEFT] != 0;
+  const bool pan_right_pressed      = state[SDL_SCANCODE_C] != 0 || state[SDL_SCANCODE_RIGHT] != 0;
 
   if (esc_pressed && !esc_pressed_) {
     dispatch_(app::AppAction::Exit);
@@ -68,6 +69,10 @@ void SdlKeypad::poll() {
     dispatch_(app::AppAction::ToggleCaptureMode);
   }
 
+  if (camera_backend_pressed && !camera_backend_pressed_) {
+    dispatch_(app::AppAction::ToggleCameraBackend);
+  }
+
   if (pan_up_pressed && !pan_up_pressed_) {
     dispatch_(app::AppAction::PanUp);
   }
@@ -84,20 +89,21 @@ void SdlKeypad::poll() {
     dispatch_(app::AppAction::PanRight);
   }
 
-  esc_pressed_       = esc_pressed;
-  h_pressed_         = h_pressed;
-  help_pressed_      = help_pressed;
-  capture_pressed_   = capture_pressed;
-  confirm_pressed_   = confirm_pressed;
-  delete_pressed_    = delete_pressed;
-  zoom_out_pressed_  = zoom_out_pressed;
-  zoom_in_pressed_   = zoom_in_pressed;
-  gallery_pressed_   = gallery_pressed;
-  mode_pressed_      = mode_pressed;
-  pan_up_pressed_    = pan_up_pressed;
-  pan_down_pressed_  = pan_down_pressed;
-  pan_left_pressed_  = pan_left_pressed;
-  pan_right_pressed_ = pan_right_pressed;
+  esc_pressed_            = esc_pressed;
+  h_pressed_              = h_pressed;
+  help_pressed_           = help_pressed;
+  capture_pressed_        = capture_pressed;
+  confirm_pressed_        = confirm_pressed;
+  delete_pressed_         = delete_pressed;
+  zoom_out_pressed_       = zoom_out_pressed;
+  zoom_in_pressed_        = zoom_in_pressed;
+  gallery_pressed_        = gallery_pressed;
+  mode_pressed_           = mode_pressed;
+  camera_backend_pressed_ = camera_backend_pressed;
+  pan_up_pressed_         = pan_up_pressed;
+  pan_down_pressed_       = pan_down_pressed;
+  pan_left_pressed_       = pan_left_pressed;
+  pan_right_pressed_      = pan_right_pressed;
 #endif
 }
 
