@@ -140,7 +140,7 @@ cd /path/to/debian_workspace/projects/CameraApp
 默认输出：
 
 ```text
-dist/CameraApp_0.2.0_m5stack1_arm64.deb
+dist/Camera_0.2.1_m5stack1_arm64.deb
 ```
 
 可选参数：
@@ -153,7 +153,7 @@ dist/CameraApp_0.2.0_m5stack1_arm64.deb
 检查包内容：
 
 ```bash
-dpkg-deb -c dist/CameraApp_0.2.0_m5stack1_arm64.deb
+dpkg-deb -c dist/Camera_0.2.1_m5stack1_arm64.deb
 ```
 
 至少应包含这些路径：
@@ -171,14 +171,14 @@ dpkg-deb -c dist/CameraApp_0.2.0_m5stack1_arm64.deb
 在目标板安装：
 
 ```bash
-sudo apt install ./dist/CameraApp_0.2.0_m5stack1_arm64.deb
+sudo apt install ./dist/Camera_0.2.1_m5stack1_arm64.deb
 ```
 
 或者复制到目标板后安装：
 
 ```bash
-scp dist/CameraApp_0.2.0_m5stack1_arm64.deb pi@pi:~/
-ssh pi@pi 'sudo apt install ./CameraApp_0.2.0_m5stack1_arm64.deb'
+scp dist/Camera_0.2.1_m5stack1_arm64.deb pi@pi:~/
+ssh pi@pi 'sudo apt install ./Camera_0.2.1_m5stack1_arm64.deb'
 ```
 
 ## 安装后的资源路径

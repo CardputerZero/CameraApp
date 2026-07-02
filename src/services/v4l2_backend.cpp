@@ -1,11 +1,11 @@
 #include "services/v4l2_backend.h"
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,13 +15,17 @@
 #include "utils/logger.h"
 
 #if !USE_DESKTOP
+#include <dirent.h>
 #include <fcntl.h>
 #include <jpeglib.h>
 #include <libv4l2.h>
 #include <linux/videodev2.h>
 #include <poll.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include <cctype>
 #endif
 
 namespace service {
@@ -30,10 +34,80 @@ namespace {
 using namespace camera_backend;
 
 #if !USE_DESKTOP
+constexpr int kPreviewOutputHeight   = 170;
+constexpr int kPreviewOutputMaxWidth = 320;
+constexpr int kStillWarmupFrameCount = 4;
+
 struct Buffer {
   void* start{nullptr};
   size_t length{0};
 };
+
+struct StreamMode {
+  uint32_t pixel_format{0};
+  int width{0};
+  int height{0};
+
+  bool valid() const { return pixel_format != 0 && width > 0 && height > 0; }
+};
+
+struct V4l2DeviceInfo {
+  std::string driver;
+  std::string card;
+  std::string bus_info;
+  uint32_t caps{0};
+};
+
+struct ControlSnapshot {
+  bool supported{false};
+  uint32_t id{0};
+  std::string key;
+  std::string driver_name;
+  int value{0};
+  int minimum{0};
+  int maximum{0};
+  int step{0};
+  int default_value{0};
+  uint32_t flags{0};
+};
+
+const char* v4l2_format_name(uint32_t pixel_format) {
+  switch (pixel_format) {
+    case V4L2_PIX_FMT_MJPEG:
+      return "MJPEG";
+    case V4L2_PIX_FMT_YUYV:
+      return "YUYV";
+    case V4L2_PIX_FMT_UYVY:
+      return "UYVY";
+    default:
+      return "unknown";
+  }
+}
+
+bool is_supported_format(uint32_t pixel_format) {
+  return pixel_format == V4L2_PIX_FMT_MJPEG || pixel_format == V4L2_PIX_FMT_YUYV ||
+         pixel_format == V4L2_PIX_FMT_UYVY;
+}
+
+int format_preview_priority(uint32_t pixel_format) {
+  if (pixel_format == V4L2_PIX_FMT_YUYV || pixel_format == V4L2_PIX_FMT_UYVY) {
+    return 0;
+  }
+  if (pixel_format == V4L2_PIX_FMT_MJPEG) {
+    return 1;
+  }
+  return 2;
+}
+
+int format_still_priority(uint32_t pixel_format) {
+  if (pixel_format == V4L2_PIX_FMT_YUYV || pixel_format == V4L2_PIX_FMT_UYVY) {
+    return 0;
+  }
+  if (pixel_format == V4L2_PIX_FMT_MJPEG) {
+    return 1;
+  }
+  return 2;
+}
 
 std::vector<std::string> device_candidates() {
   std::vector<std::string> devices;
@@ -52,8 +126,36 @@ std::vector<std::string> device_candidates() {
   if (const char* env_device = std::getenv("V4L2_CAMERA_DEVICE")) {
     add_unique(env_device);
   }
-  for (int i = 0; i < 8; ++i) {
-    add_unique("/dev/video" + std::to_string(i));
+
+  std::vector<int> video_indices;
+  if (DIR* dir = ::opendir("/dev")) {
+    while (dirent* entry = ::readdir(dir)) {
+      const std::string name = entry->d_name ? entry->d_name : "";
+      if (name.rfind("video", 0) != 0 || name.size() <= 5) {
+        continue;
+      }
+
+      bool numeric = true;
+      for (size_t i = 5; i < name.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(name[i]))) {
+          numeric = false;
+          break;
+        }
+      }
+      if (!numeric) {
+        continue;
+      }
+      video_indices.push_back(std::atoi(name.c_str() + 5));
+    }
+    ::closedir(dir);
+  } else {
+    LOG_WARN("Failed to enumerate /dev for V4L2 devices: {}", std::strerror(errno));
+  }
+
+  std::sort(video_indices.begin(), video_indices.end());
+  video_indices.erase(std::unique(video_indices.begin(), video_indices.end()), video_indices.end());
+  for (int index : video_indices) {
+    add_unique("/dev/video" + std::to_string(index));
   }
   return devices;
 }
@@ -66,15 +168,316 @@ bool ioctl_retry(int fd, unsigned long request, void* arg) {
   return ret == 0;
 }
 
-bool has_capture_capability(int fd) {
+std::string cap_string(const unsigned char* data, size_t size) {
+  if (!data || size == 0) {
+    return {};
+  }
+  const char* begin = reinterpret_cast<const char*>(data);
+  size_t length     = 0;
+  while (length < size && begin[length] != '\0') {
+    ++length;
+  }
+  return std::string(begin, length);
+}
+
+std::string control_name(const v4l2_queryctrl& query) {
+  return cap_string(query.name, sizeof(query.name));
+}
+
+bool query_device_info(int fd, V4l2DeviceInfo& info) {
   v4l2_capability cap{};
   if (!ioctl_retry(fd, VIDIOC_QUERYCAP, &cap)) {
     return false;
   }
 
-  const uint32_t caps =
-      (cap.capabilities & V4L2_CAP_DEVICE_CAPS) ? cap.device_caps : cap.capabilities;
-  return (caps & V4L2_CAP_VIDEO_CAPTURE) && (caps & V4L2_CAP_STREAMING);
+  info.driver   = cap_string(cap.driver, sizeof(cap.driver));
+  info.card     = cap_string(cap.card, sizeof(cap.card));
+  info.bus_info = cap_string(cap.bus_info, sizeof(cap.bus_info));
+  info.caps     = (cap.capabilities & V4L2_CAP_DEVICE_CAPS) ? cap.device_caps : cap.capabilities;
+  return true;
+}
+
+bool has_capture_capability(const V4l2DeviceInfo& info) {
+  return (info.caps & V4L2_CAP_VIDEO_CAPTURE) && (info.caps & V4L2_CAP_STREAMING);
+}
+
+bool is_usb_uvc_device(const V4l2DeviceInfo& info) {
+  std::string driver   = lower_string(info.driver);
+  std::string bus_info = lower_string(info.bus_info);
+  return driver == "uvcvideo" || bus_info.rfind("usb", 0) == 0 ||
+         bus_info.find(":usb") != std::string::npos;
+}
+
+ControlSnapshot query_control_snapshot(int fd, uint32_t id, std::string key) {
+  ControlSnapshot snapshot;
+  snapshot.id  = id;
+  snapshot.key = std::move(key);
+
+  v4l2_queryctrl query{};
+  query.id = id;
+  if (!ioctl_retry(fd, VIDIOC_QUERYCTRL, &query) || (query.flags & V4L2_CTRL_FLAG_DISABLED)) {
+    return snapshot;
+  }
+
+  snapshot.supported     = true;
+  snapshot.driver_name   = control_name(query);
+  snapshot.minimum       = query.minimum;
+  snapshot.maximum       = query.maximum;
+  snapshot.step          = query.step;
+  snapshot.default_value = query.default_value;
+  snapshot.flags         = query.flags;
+
+  v4l2_control control{};
+  control.id = id;
+  if (ioctl_retry(fd, VIDIOC_G_CTRL, &control)) {
+    snapshot.value = control.value;
+  }
+  return snapshot;
+}
+
+std::vector<ControlSnapshot> enumerate_control_snapshots(int fd) {
+  std::vector<ControlSnapshot> controls;
+  v4l2_queryctrl query{};
+  query.id = V4L2_CTRL_FLAG_NEXT_CTRL;
+  while (ioctl_retry(fd, VIDIOC_QUERYCTRL, &query)) {
+    if ((query.flags & V4L2_CTRL_FLAG_DISABLED) == 0) {
+      controls.push_back(query_control_snapshot(fd, query.id, control_name(query)));
+    }
+    query.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+  }
+  return controls;
+}
+
+ControlSnapshot find_named_control(int fd,
+                                   const std::vector<ControlSnapshot>& controls,
+                                   const std::vector<std::string>& needles,
+                                   const std::string& key) {
+  for (const auto& control : controls) {
+    const std::string haystack = lower_string(control.driver_name.empty() ? control.key
+                                                                          : control.driver_name);
+    const bool matched = std::any_of(needles.begin(), needles.end(), [&haystack](const auto& item) {
+      return haystack.find(item) != std::string::npos;
+    });
+    if (matched) {
+      return query_control_snapshot(fd, control.id, key);
+    }
+  }
+  ControlSnapshot snapshot;
+  snapshot.key = key;
+  return snapshot;
+}
+
+std::string snapshot_value_text(const ControlSnapshot& snapshot) {
+  if (!snapshot.supported) {
+    return "n/a";
+  }
+
+  std::ostringstream out;
+  out << snapshot.value << " [" << snapshot.minimum << ".." << snapshot.maximum << "]";
+  if (snapshot.flags & V4L2_CTRL_FLAG_INACTIVE) {
+    out << " inactive";
+  }
+  if (snapshot.flags & V4L2_CTRL_FLAG_READ_ONLY) {
+    out << " ro";
+  }
+  return out.str();
+}
+
+std::string build_control_diagnostics(int fd) {
+  if (fd < 0) {
+    return {};
+  }
+
+  const auto controls = enumerate_control_snapshots(fd);
+  const ControlSnapshot exposure_auto =
+      query_control_snapshot(fd, V4L2_CID_EXPOSURE_AUTO, "exposure_auto");
+  const ControlSnapshot exposure =
+      query_control_snapshot(fd, V4L2_CID_EXPOSURE_ABSOLUTE, "exposure");
+  const ControlSnapshot legacy_exposure = exposure.supported
+                                              ? exposure
+                                              : query_control_snapshot(fd, V4L2_CID_EXPOSURE, "exposure");
+  const ControlSnapshot auto_gain = query_control_snapshot(fd, V4L2_CID_AUTOGAIN, "auto_gain");
+  const ControlSnapshot gain      = query_control_snapshot(fd, V4L2_CID_GAIN, "gain");
+  const ControlSnapshot focus_auto = query_control_snapshot(fd, V4L2_CID_FOCUS_AUTO, "focus_auto");
+  const ControlSnapshot focus = query_control_snapshot(fd, V4L2_CID_FOCUS_ABSOLUTE, "focus");
+  const ControlSnapshot auto_wb =
+      query_control_snapshot(fd, V4L2_CID_AUTO_WHITE_BALANCE, "auto_wb");
+  const ControlSnapshot wb =
+      query_control_snapshot(fd, V4L2_CID_WHITE_BALANCE_TEMPERATURE, "white_balance");
+  const ControlSnapshot sharpness = query_control_snapshot(fd, V4L2_CID_SHARPNESS, "sharpness");
+  const ControlSnapshot denoise =
+      find_named_control(fd,
+                         controls,
+                         {"denoise", "noise reduction", "noise", "nr"},
+                         "denoise");
+
+  std::ostringstream out;
+  out << "Exp " << snapshot_value_text(legacy_exposure);
+  if (exposure_auto.supported) {
+    out << " A" << exposure_auto.value;
+  }
+  out << "\nGain " << snapshot_value_text(gain);
+  if (auto_gain.supported) {
+    out << " A" << auto_gain.value;
+  }
+  out << "\nFocus " << snapshot_value_text(focus);
+  if (focus_auto.supported) {
+    out << " A" << focus_auto.value;
+  }
+  out << "\nWB " << snapshot_value_text(wb);
+  if (auto_wb.supported) {
+    out << " A" << auto_wb.value;
+  }
+  out << "\nSharp " << snapshot_value_text(sharpness);
+  out << "\nDenoise " << snapshot_value_text(denoise);
+  return out.str();
+}
+
+void append_mode_unique(std::vector<StreamMode>& modes, StreamMode mode) {
+  if (!mode.valid() || !is_supported_format(mode.pixel_format)) {
+    return;
+  }
+  const auto found = std::find_if(modes.begin(), modes.end(), [mode](const StreamMode& item) {
+    return item.pixel_format == mode.pixel_format && item.width == mode.width &&
+           item.height == mode.height;
+  });
+  if (found == modes.end()) {
+    modes.push_back(mode);
+  }
+}
+
+std::vector<StreamMode> enumerate_modes(int fd) {
+  std::vector<StreamMode> modes;
+  v4l2_fmtdesc format{};
+  format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  for (format.index = 0; ioctl_retry(fd, VIDIOC_ENUM_FMT, &format); ++format.index) {
+    if (!is_supported_format(format.pixelformat)) {
+      continue;
+    }
+
+    v4l2_frmsizeenum frame_size{};
+    frame_size.pixel_format = format.pixelformat;
+    for (frame_size.index = 0; ioctl_retry(fd, VIDIOC_ENUM_FRAMESIZES, &frame_size);
+         ++frame_size.index) {
+      if (frame_size.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+        append_mode_unique(modes,
+                           {format.pixelformat,
+                            static_cast<int>(frame_size.discrete.width),
+                            static_cast<int>(frame_size.discrete.height)});
+      } else if (frame_size.type == V4L2_FRMSIZE_TYPE_STEPWISE ||
+                 frame_size.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) {
+        append_mode_unique(modes,
+                           {format.pixelformat,
+                            static_cast<int>(frame_size.stepwise.min_width),
+                            static_cast<int>(frame_size.stepwise.min_height)});
+        append_mode_unique(modes,
+                           {format.pixelformat,
+                            static_cast<int>(frame_size.stepwise.max_width),
+                            static_cast<int>(frame_size.stepwise.max_height)});
+        break;
+      }
+    }
+  }
+
+  return modes;
+}
+
+std::vector<StreamMode> preview_mode_candidates(std::vector<StreamMode> modes) {
+  std::sort(modes.begin(), modes.end(), [](const StreamMode& lhs, const StreamMode& rhs) {
+    const bool lhs_can_fill = lhs.height >= kPreviewOutputHeight;
+    const bool rhs_can_fill = rhs.height >= kPreviewOutputHeight;
+    if (lhs_can_fill != rhs_can_fill) {
+      return lhs_can_fill;
+    }
+
+    const int64_t lhs_area = static_cast<int64_t>(lhs.width) * lhs.height;
+    const int64_t rhs_area = static_cast<int64_t>(rhs.width) * rhs.height;
+    if (lhs_area != rhs_area) {
+      return lhs_area < rhs_area;
+    }
+    return format_preview_priority(lhs.pixel_format) < format_preview_priority(rhs.pixel_format);
+  });
+  return modes;
+}
+
+std::vector<StreamMode> still_mode_candidates(std::vector<StreamMode> modes) {
+  std::sort(modes.begin(), modes.end(), [](const StreamMode& lhs, const StreamMode& rhs) {
+    const int lhs_priority = format_still_priority(lhs.pixel_format);
+    const int rhs_priority = format_still_priority(rhs.pixel_format);
+    if (lhs_priority != rhs_priority) {
+      return lhs_priority < rhs_priority;
+    }
+
+    const int64_t lhs_area = static_cast<int64_t>(lhs.width) * lhs.height;
+    const int64_t rhs_area = static_cast<int64_t>(rhs.width) * rhs.height;
+    return lhs_area > rhs_area;
+  });
+  return modes;
+}
+
+void log_modes(const std::string& device, const std::vector<StreamMode>& modes) {
+  LOG_INFO("V4L2 USB camera {} reported {} supported modes", device, modes.size());
+  for (const auto& mode : modes) {
+    LOG_INFO("V4L2 mode: {}x{} {}", mode.width, mode.height, v4l2_format_name(mode.pixel_format));
+  }
+}
+
+int preview_width_for_source(int width, int height) {
+  if (width <= 0 || height <= 0) {
+    return kPreviewWidth;
+  }
+  int out_width = width * kPreviewOutputHeight / height;
+  out_width     = clamp_int(out_width, 1, kPreviewOutputMaxWidth);
+  if (out_width > 1 && (out_width % 2) != 0) {
+    --out_width;
+  }
+  return std::max(1, out_width);
+}
+
+struct CropRect {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+};
+
+CropRect preview_crop_for_source(int src_width,
+                                 int src_height,
+                                 int out_width,
+                                 int out_height,
+                                 CameraZoomState zoom_state) {
+  CropRect crop{0, 0, src_width, src_height};
+  if (src_width <= 0 || src_height <= 0 || out_width <= 0 || out_height <= 0) {
+    return crop;
+  }
+
+  if (static_cast<int64_t>(crop.width) * out_height >
+      static_cast<int64_t>(crop.height) * out_width) {
+    const int target_width =
+        std::max(1, static_cast<int>(static_cast<int64_t>(crop.height) * out_width / out_height));
+    crop.x += (crop.width - target_width) / 2;
+    crop.width = target_width;
+  } else if (static_cast<int64_t>(crop.width) * out_height <
+             static_cast<int64_t>(crop.height) * out_width) {
+    const int target_height =
+        std::max(1, static_cast<int>(static_cast<int64_t>(crop.width) * out_height / out_width));
+    crop.y += (crop.height - target_height) / 2;
+    crop.height = target_height;
+  }
+
+  const int zoom = normalize_zoom_percent(zoom_state.zoom_percent);
+  if (zoom > kMinZoomPercent) {
+    const int zoomed_width  = std::max(1, crop.width * kMinZoomPercent / zoom);
+    const int zoomed_height = std::max(1, crop.height * kMinZoomPercent / zoom);
+    const int max_x         = crop.width - zoomed_width;
+    const int max_y         = crop.height - zoomed_height;
+    crop.x += max_x * clamp_int(zoom_state.view_x_percent, 0, 100) / 100;
+    crop.y += max_y * clamp_int(zoom_state.view_y_percent, 0, 100) / 100;
+    crop.width  = zoomed_width;
+    crop.height = zoomed_height;
+  }
+
+  return crop;
 }
 
 bool decompress_mjpeg(const uint8_t* data,
@@ -131,20 +534,161 @@ bool decompress_mjpeg(const uint8_t* data,
   return true;
 }
 
-bool rgb888_to_frame(const std::vector<uint8_t>& rgb, int width, int height, CameraFrame& frame) {
-  if (width <= 0 || height <= 0 || rgb.size() < static_cast<size_t>(width * height * 3)) {
+bool save_jpeg_bytes(const std::string& path, const uint8_t* data, size_t size) {
+  if (path.empty() || !data || size == 0) {
     return false;
   }
-  frame.width  = width;
-  frame.height = height;
-  frame.rgb565.assign(static_cast<size_t>(width) * height, 0);
+
+  FILE* fp = std::fopen(path.c_str(), "wb");
+  if (!fp) {
+    LOG_ERROR("Failed to open jpeg file: {}", path);
+    return false;
+  }
+  const bool ok = std::fwrite(data, 1, size, fp) == size;
+  std::fclose(fp);
+  if (ok) {
+    (void)::chmod(path.c_str(), 0644);
+  }
+  return ok;
+}
+
+bool rgb888_to_scaled_preview_frame(const std::vector<uint8_t>& rgb,
+                                    int src_width,
+                                    int src_height,
+                                    CameraZoomState zoom_state,
+                                    CameraFrame& frame) {
+  if (src_width <= 0 || src_height <= 0 ||
+      rgb.size() < static_cast<size_t>(src_width * src_height * 3)) {
+    return false;
+  }
+
+  const int out_width  = preview_width_for_source(src_width, src_height);
+  const int out_height = kPreviewOutputHeight;
+  const CropRect crop =
+      preview_crop_for_source(src_width, src_height, out_width, out_height, zoom_state);
+  frame.width  = out_width;
+  frame.height = out_height;
+  frame.rgb565.assign(static_cast<size_t>(out_width) * out_height, 0);
+
+  for (int y = 0; y < out_height; ++y) {
+    const int src_y = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
+    for (int x = 0; x < out_width; ++x) {
+      const int src_x      = crop.x + std::min(crop.width - 1, x * crop.width / out_width);
+      const size_t src_idx = static_cast<size_t>(src_y * src_width + src_x) * 3;
+      frame.rgb565[static_cast<size_t>(y * out_width + x)] =
+          rgb888_to_rgb565(rgb[src_idx], rgb[src_idx + 1], rgb[src_idx + 2]);
+    }
+  }
+  return true;
+}
+
+void yuv_to_rgb(uint8_t y, uint8_t u, uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
+  const int yy = static_cast<int>(y);
+  const int uu = static_cast<int>(u) - 128;
+  const int vv = static_cast<int>(v) - 128;
+  r            = clip_u8(yy + ((1436 * vv) >> 10));
+  g            = clip_u8(yy - ((352 * uu + 731 * vv) >> 10));
+  b            = clip_u8(yy + ((1815 * uu) >> 10));
+}
+
+bool yuv422_to_scaled_preview_frame(const uint8_t* data,
+                                    size_t size,
+                                    int src_width,
+                                    int src_height,
+                                    int stride,
+                                    uint32_t pixel_format,
+                                    CameraZoomState zoom_state,
+                                    CameraFrame& frame) {
+  if (!data || src_width <= 0 || src_height <= 0) {
+    return false;
+  }
+  if (src_width < 2) {
+    return false;
+  }
+  const int row_stride = stride > 0 ? stride : src_width * 2;
+  if (row_stride < src_width * 2 || size < static_cast<size_t>(row_stride) * src_height) {
+    return false;
+  }
+
+  const int out_width  = preview_width_for_source(src_width, src_height);
+  const int out_height = kPreviewOutputHeight;
+  const CropRect crop =
+      preview_crop_for_source(src_width, src_height, out_width, out_height, zoom_state);
+  const bool is_yuyv = pixel_format == V4L2_PIX_FMT_YUYV;
+  frame.width        = out_width;
+  frame.height       = out_height;
+  frame.rgb565.assign(static_cast<size_t>(out_width) * out_height, 0);
+
+  for (int y = 0; y < out_height; ++y) {
+    const int src_y     = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
+    const uint8_t* line = data + static_cast<size_t>(src_y) * row_stride;
+    for (int x = 0; x < out_width; ++x) {
+      const int src_x     = crop.x + std::min(crop.width - 1, x * crop.width / out_width);
+      const int pair_x    = std::min(src_x & ~1, src_width - 2);
+      const uint8_t* pair = line + pair_x * 2;
+      const uint8_t b0    = pair[0];
+      const uint8_t b1    = pair[1];
+      const uint8_t b2    = pair[2];
+      const uint8_t b3    = pair[3];
+      const bool first    = (src_x % 2) == 0;
+      const uint8_t yy    = is_yuyv ? (first ? b0 : b2) : (first ? b1 : b3);
+      const uint8_t uu    = is_yuyv ? b1 : b0;
+      const uint8_t vv    = is_yuyv ? b3 : b2;
+      uint8_t r           = 0;
+      uint8_t g           = 0;
+      uint8_t b           = 0;
+      yuv_to_rgb(yy, uu, vv, r, g, b);
+      frame.rgb565[static_cast<size_t>(y * out_width + x)] = rgb888_to_rgb565(r, g, b);
+    }
+  }
+
+  return true;
+}
+
+bool yuv422_to_rgb888(const uint8_t* data,
+                      size_t size,
+                      int width,
+                      int height,
+                      int stride,
+                      uint32_t pixel_format,
+                      std::vector<uint8_t>& rgb) {
+  if (!data || width < 2 || height <= 0) {
+    return false;
+  }
+  const int row_stride = stride > 0 ? stride : width * 2;
+  if (row_stride < width * 2 || size < static_cast<size_t>(row_stride) * height) {
+    return false;
+  }
+
+  const bool is_yuyv = pixel_format == V4L2_PIX_FMT_YUYV;
+  rgb.assign(static_cast<size_t>(width) * height * 3, 0);
   for (int y = 0; y < height; ++y) {
-    const int dst_y = height - 1 - y;
-    for (int x = 0; x < width; ++x) {
-      const int dst_x       = width - 1 - x;
-      const size_t src_idx  = static_cast<size_t>(y * width + x) * 3;
-      const int dst_idx     = dst_y * width + dst_x;
-      frame.rgb565[dst_idx] = rgb888_to_rgb565(rgb[src_idx], rgb[src_idx + 1], rgb[src_idx + 2]);
+    const uint8_t* line = data + static_cast<size_t>(y) * row_stride;
+    for (int x = 0; x < width; x += 2) {
+      const uint8_t b0 = line[x * 2];
+      const uint8_t b1 = line[x * 2 + 1];
+      const uint8_t b2 = line[x * 2 + 2];
+      const uint8_t b3 = line[x * 2 + 3];
+      const uint8_t u  = is_yuyv ? b1 : b0;
+      const uint8_t v  = is_yuyv ? b3 : b2;
+      const uint8_t y0 = is_yuyv ? b0 : b1;
+      const uint8_t y1 = is_yuyv ? b2 : b3;
+
+      auto write_pixel = [&](int px, uint8_t yy) {
+        if (px >= width) {
+          return;
+        }
+        uint8_t r = 0;
+        uint8_t g = 0;
+        uint8_t b = 0;
+        yuv_to_rgb(yy, u, v, r, g, b);
+        const size_t dst = static_cast<size_t>(y * width + px) * 3;
+        rgb[dst]         = r;
+        rgb[dst + 1]     = g;
+        rgb[dst + 2]     = b;
+      };
+      write_pixel(x, y0);
+      write_pixel(x + 1, y1);
     }
   }
   return true;
@@ -158,6 +702,11 @@ struct V4l2Backend::Impl {
   int fd{-1};
   std::string device;
   std::vector<Buffer> buffers;
+  std::vector<StreamMode> modes;
+  std::vector<StreamMode> preview_modes;
+  std::vector<StreamMode> still_modes;
+  StreamMode preview_mode;
+  StreamMode still_mode;
   CameraResolution capture_resolution{kDefaultCaptureWidth, kDefaultCaptureHeight};
   CameraZoomState zoom_state{};
   CameraFrame latest_frame;
@@ -175,6 +724,7 @@ struct V4l2Backend::Impl {
   int height{kPreviewHeight};
   int stride{kPreviewWidth * 2};
   bool opened{false};
+  bool streaming{false};
 
   bool open() {
     for (const auto& candidate : device_candidates()) {
@@ -196,68 +746,154 @@ struct V4l2Backend::Impl {
       return false;
     }
 
-    if (!has_capture_capability(fd)) {
+    V4l2DeviceInfo device_info;
+    if (!query_device_info(fd, device_info)) {
+      last_error_value = path + ": failed to query V4L2 capabilities";
+      close();
+      return false;
+    }
+
+    LOG_INFO("Found V4L2 device {}: driver={} card={} bus={} caps=0x{:x}",
+             path,
+             device_info.driver,
+             device_info.card,
+             device_info.bus_info,
+             device_info.caps);
+
+    if (!has_capture_capability(device_info)) {
       last_error_value = path + ": not a streaming capture device";
+      LOG_INFO("Skipping V4L2 device {}: {}", path, last_error_value);
+      close();
+      return false;
+    }
+
+    if (!is_usb_uvc_device(device_info)) {
+      last_error_value = path + ": not a USB UVC camera";
+      LOG_INFO("Skipping V4L2 device {}: driver={} bus={} is not USB UVC",
+               path,
+               device_info.driver,
+               device_info.bus_info);
       close();
       return false;
     }
 
     device = path;
-    if (!configure_format()) {
+    modes  = enumerate_modes(fd);
+    if (modes.empty()) {
+      LOG_WARN("V4L2 USB camera {} did not enumerate frame sizes; using fallback probes", device);
+      modes = {
+          {V4L2_PIX_FMT_MJPEG, kDefaultCaptureWidth, kDefaultCaptureHeight},
+          {V4L2_PIX_FMT_YUYV, 640, 480},
+          {V4L2_PIX_FMT_YUYV, 320, 240},
+      };
+    }
+    log_modes(device, modes);
+    preview_modes = preview_mode_candidates(modes);
+    still_modes   = still_mode_candidates(modes);
+    if (preview_modes.empty() || still_modes.empty()) {
+      last_error_value = path + ": no supported V4L2 modes (MJPEG/YUYV/UYVY)";
       close();
       return false;
     }
-    if (!init_mmap()) {
+    if (!start_preview_stream()) {
       close();
       return false;
     }
-    if (!start_streaming()) {
-      close();
-      return false;
+    still_mode = still_modes.front();
+    LOG_INFO("V4L2 selected USB still candidate: {}x{} {}",
+             still_mode.width,
+             still_mode.height,
+             v4l2_format_name(still_mode.pixel_format));
+    const std::string control_diagnostics = build_control_diagnostics(fd);
+    if (!control_diagnostics.empty()) {
+      LOG_INFO("V4L2 camera controls:\n{}", control_diagnostics);
     }
 
     opened = true;
-    LOG_INFO("V4L2 camera started: {} {}x{} stride={} format={}",
+    LOG_INFO("V4L2 camera started: {} preview={}x{} {} stride={} still={}x{} {}",
              device,
-             width,
-             height,
+             preview_mode.width,
+             preview_mode.height,
+             v4l2_format_name(preview_mode.pixel_format),
              stride,
-             pixel_format == V4L2_PIX_FMT_MJPEG ? "MJPEG" : "YUYV");
+             still_mode.width,
+             still_mode.height,
+             v4l2_format_name(still_mode.pixel_format));
     return true;
   }
 
-  bool configure_format() {
-    constexpr std::array<uint32_t, 2> formats{V4L2_PIX_FMT_MJPEG, V4L2_PIX_FMT_YUYV};
-    for (uint32_t fmt : formats) {
-      v4l2_format format{};
-      format.type          = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-      format.fmt.pix.width = static_cast<uint32_t>(
-          capture_resolution.width > 0 ? capture_resolution.width : kDefaultCaptureWidth);
-      format.fmt.pix.height = static_cast<uint32_t>(
-          capture_resolution.height > 0 ? capture_resolution.height : kDefaultCaptureHeight);
-      format.fmt.pix.pixelformat = fmt;
-      format.fmt.pix.field       = V4L2_FIELD_ANY;
-
-      if (!ioctl_retry(fd, VIDIOC_S_FMT, &format)) {
+  bool start_preview_stream() {
+    for (const auto& mode : preview_modes) {
+      LOG_INFO("Trying V4L2 USB preview mode: {}x{} {}",
+               mode.width,
+               mode.height,
+               v4l2_format_name(mode.pixel_format));
+      if (!configure_format(mode)) {
         continue;
       }
-
-      if (format.fmt.pix.pixelformat != fmt) {
+      if (!init_mmap()) {
+        release_buffers();
         continue;
       }
-
-      pixel_format = fmt;
-      width        = static_cast<int>(format.fmt.pix.width);
-      height       = static_cast<int>(format.fmt.pix.height);
-      stride       = static_cast<int>(format.fmt.pix.bytesperline);
-      if (stride <= 0) {
-        stride = pixel_format == V4L2_PIX_FMT_YUYV ? width * 2 : width;
+      if (!start_streaming()) {
+        release_buffers();
+        continue;
       }
+      preview_mode = mode;
+      LOG_INFO("Selected V4L2 USB preview mode: {}x{} {} -> display {}x{}",
+               width,
+               height,
+               v4l2_format_name(pixel_format),
+               preview_width_for_source(width, height),
+               kPreviewOutputHeight);
       return true;
     }
-
-    last_error_value = device + ": no supported V4L2 format (MJPEG/YUYV)";
+    if (last_error_value.empty()) {
+      last_error_value = device + ": failed to start any V4L2 preview mode";
+    }
     return false;
+  }
+
+  bool configure_format(StreamMode mode) {
+    if (!mode.valid()) {
+      last_error_value = device + ": invalid V4L2 mode";
+      return false;
+    }
+
+    v4l2_format format{};
+    format.type                = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    format.fmt.pix.width       = static_cast<uint32_t>(mode.width);
+    format.fmt.pix.height      = static_cast<uint32_t>(mode.height);
+    format.fmt.pix.pixelformat = mode.pixel_format;
+    format.fmt.pix.field       = V4L2_FIELD_ANY;
+
+    if (!ioctl_retry(fd, VIDIOC_S_FMT, &format)) {
+      last_error_value = device + ": failed to set V4L2 mode " + std::to_string(mode.width) + "x" +
+                         std::to_string(mode.height) + " " + v4l2_format_name(mode.pixel_format);
+      return false;
+    }
+
+    if (!is_supported_format(format.fmt.pix.pixelformat)) {
+      last_error_value = device + ": driver selected unsupported V4L2 format";
+      return false;
+    }
+
+    pixel_format = format.fmt.pix.pixelformat;
+    width        = static_cast<int>(format.fmt.pix.width);
+    height       = static_cast<int>(format.fmt.pix.height);
+    stride       = static_cast<int>(format.fmt.pix.bytesperline);
+    if (stride <= 0) {
+      stride = pixel_format == V4L2_PIX_FMT_MJPEG ? width : width * 2;
+    }
+    LOG_INFO("Configured V4L2 format: requested={}x{} {} active={}x{} {} stride={}",
+             mode.width,
+             mode.height,
+             v4l2_format_name(mode.pixel_format),
+             width,
+             height,
+             v4l2_format_name(pixel_format),
+             stride);
+    return true;
   }
 
   bool init_mmap() {
@@ -278,6 +914,7 @@ struct V4l2Backend::Impl {
       buf.index  = i;
       if (!ioctl_retry(fd, VIDIOC_QUERYBUF, &buf)) {
         last_error_value = device + ": failed to query V4L2 buffer";
+        release_buffers();
         return false;
       }
 
@@ -287,6 +924,7 @@ struct V4l2Backend::Impl {
       if (buffers[i].start == MAP_FAILED) {
         buffers[i].start = nullptr;
         last_error_value = device + ": failed to mmap V4L2 buffer";
+        release_buffers();
         return false;
       }
     }
@@ -310,17 +948,21 @@ struct V4l2Backend::Impl {
       last_error_value = device + ": failed to start V4L2 stream";
       return false;
     }
+    streaming = true;
     return true;
   }
 
-  void close() {
-    (void)stop_video_recording();
-    if (fd >= 0 && opened) {
+  void stop_streaming() {
+    if (fd >= 0 && streaming) {
       v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-      (void)v4l2_ioctl(fd, VIDIOC_STREAMOFF, &type);
+      if (v4l2_ioctl(fd, VIDIOC_STREAMOFF, &type) < 0) {
+        LOG_WARN("Failed to stop V4L2 stream: {}", std::strerror(errno));
+      }
     }
-    opened = false;
+    streaming = false;
+  }
 
+  void release_buffers() {
     for (auto& buffer : buffers) {
       if (buffer.start) {
         v4l2_munmap(buffer.start, buffer.length);
@@ -329,12 +971,148 @@ struct V4l2Backend::Impl {
     buffers.clear();
 
     if (fd >= 0) {
+      v4l2_requestbuffers req{};
+      req.count  = 0;
+      req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+      req.memory = V4L2_MEMORY_MMAP;
+      if (!ioctl_retry(fd, VIDIOC_REQBUFS, &req) && errno != EINVAL) {
+        LOG_WARN("Failed to release V4L2 buffer queue: {}", std::strerror(errno));
+      }
+    }
+  }
+
+  bool switch_stream_mode(StreamMode mode, bool for_still = false) {
+    stop_streaming();
+    release_buffers();
+    if (!configure_format(mode)) {
+      return false;
+    }
+    if (for_still) {
+      apply_still_capture_settings();
+    }
+    if (!init_mmap()) {
+      return false;
+    }
+    return start_streaming();
+  }
+
+  void set_control_to_max(uint32_t id, const char* name) {
+    v4l2_queryctrl query{};
+    query.id = id;
+    if (!ioctl_retry(fd, VIDIOC_QUERYCTRL, &query)) {
+      LOG_INFO("V4L2 still {} control is unavailable: {}", name, std::strerror(errno));
+      return;
+    }
+    if (query.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY |
+                       V4L2_CTRL_FLAG_INACTIVE)) {
+      LOG_INFO("V4L2 still {} control is not writable: flags=0x{:x}", name, query.flags);
+      return;
+    }
+
+    v4l2_control control{};
+    control.id    = id;
+    control.value = query.maximum;
+    if (ioctl_retry(fd, VIDIOC_S_CTRL, &control)) {
+      LOG_INFO("V4L2 still {} set to max value {}", name, control.value);
+    } else {
+      LOG_INFO("V4L2 still {} max value {} was not accepted: {}",
+               name,
+               control.value,
+               std::strerror(errno));
+    }
+  }
+
+  void apply_high_quality_capture_mode() {
+    v4l2_streamparm parm{};
+    parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (!ioctl_retry(fd, VIDIOC_G_PARM, &parm)) {
+      LOG_INFO("V4L2 still high quality mode is unavailable: {}", std::strerror(errno));
+      return;
+    }
+    if ((parm.parm.capture.capability & V4L2_MODE_HIGHQUALITY) == 0) {
+      LOG_INFO("V4L2 still high quality mode is not supported");
+      return;
+    }
+
+    parm.parm.capture.capturemode |= V4L2_MODE_HIGHQUALITY;
+    if (ioctl_retry(fd, VIDIOC_S_PARM, &parm)) {
+      LOG_INFO("V4L2 still high quality capture mode enabled");
+    } else {
+      LOG_INFO("V4L2 still high quality capture mode was not accepted: {}", std::strerror(errno));
+    }
+  }
+
+  void apply_jpeg_compression_settings() {
+    if (pixel_format != V4L2_PIX_FMT_MJPEG) {
+      return;
+    }
+
+    set_control_to_max(V4L2_CID_JPEG_COMPRESSION_QUALITY, "JPEG quality");
+    set_control_to_max(V4L2_CID_MPEG_VIDEO_BITRATE, "MPEG video bitrate");
+    set_control_to_max(V4L2_CID_MPEG_VIDEO_BITRATE_PEAK, "MPEG video peak bitrate");
+
+    v4l2_jpegcompression jpeg{};
+    if (!ioctl_retry(fd, VIDIOC_G_JPEGCOMP, &jpeg)) {
+      LOG_INFO("V4L2 still JPEG compression parameters are unavailable: {}", std::strerror(errno));
+      return;
+    }
+
+    const int previous_quality = jpeg.quality;
+    jpeg.quality              = 100;
+    jpeg.jpeg_markers |= V4L2_JPEG_MARKER_DHT | V4L2_JPEG_MARKER_DQT;
+    if (ioctl_retry(fd, VIDIOC_S_JPEGCOMP, &jpeg)) {
+      LOG_INFO("V4L2 still JPEG compression quality set: {} -> {}", previous_quality, jpeg.quality);
+    } else {
+      LOG_INFO("V4L2 still JPEG compression quality was not accepted: {}",
+               std::strerror(errno));
+    }
+  }
+
+  void apply_still_capture_settings() {
+    apply_high_quality_capture_mode();
+    apply_jpeg_compression_settings();
+  }
+
+  bool reopen_preview_stream() {
+    LOG_WARN("Reopening V4L2 device to recover preview stream");
+    stop_streaming();
+    release_buffers();
+    if (fd >= 0) {
+      v4l2_close(fd);
+      fd = -1;
+    }
+    fd = v4l2_open(device.c_str(), O_RDWR | O_NONBLOCK, 0);
+    if (fd < 0) {
+      last_error_value = device + ": failed to reopen V4L2 device: " + std::strerror(errno);
+      opened           = false;
+      return false;
+    }
+    if (!switch_stream_mode(preview_mode)) {
+      opened = false;
+      return false;
+    }
+    opened = true;
+    return true;
+  }
+
+  void close() {
+    (void)stop_video_recording();
+    stop_streaming();
+    opened = false;
+
+    release_buffers();
+
+    if (fd >= 0) {
       v4l2_close(fd);
       fd = -1;
     }
   }
 
   bool consume_frame(CameraFrame& frame) {
+    if (!opened || !streaming || buffers.empty()) {
+      return false;
+    }
+
     pollfd pfd{};
     pfd.fd                = fd;
     pfd.events            = POLLIN;
@@ -383,40 +1161,22 @@ struct V4l2Backend::Impl {
       }
       width  = jpeg_w;
       height = jpeg_h;
-      if (!rgb888_to_frame(latest_rgb, width, height, latest_frame)) {
+      if (!rgb888_to_scaled_preview_frame(latest_rgb, width, height, zoom_state, latest_frame)) {
         return false;
       }
       write_video_frame();
       return true;
     }
 
-    CameraFrame frame;
-    frame.width  = width;
-    frame.height = height;
-    frame.rgb565.assign(static_cast<size_t>(width) * height, 0);
-    std::vector<const uint8_t*> planes{data};
-    std::vector<size_t> bytes_used{static_cast<size_t>(buf.bytesused)};
-    if (!convert_frame_to_outputs(planes,
-                                  bytes_used,
-                                  width,
-                                  height,
-                                  stride,
-                                  PixelFormat::YUYV,
-                                  false,
-                                  &frame,
-                                  nullptr)) {
+    if (!yuv422_to_scaled_preview_frame(data,
+                                        buf.bytesused,
+                                        width,
+                                        height,
+                                        stride,
+                                        pixel_format,
+                                        zoom_state,
+                                        latest_frame)) {
       return false;
-    }
-    latest_frame = std::move(frame);
-    latest_rgb.assign(static_cast<size_t>(width) * height * 3, 0);
-    for (int i = 0; i < width * height; ++i) {
-      uint8_t r = 0;
-      uint8_t g = 0;
-      uint8_t b = 0;
-      rgb565_to_rgb888(latest_frame.rgb565[i], r, g, b);
-      latest_rgb[static_cast<size_t>(i) * 3]     = r;
-      latest_rgb[static_cast<size_t>(i) * 3 + 1] = g;
-      latest_rgb[static_cast<size_t>(i) * 3 + 2] = b;
     }
     write_video_frame();
     return true;
@@ -426,32 +1186,131 @@ struct V4l2Backend::Impl {
     if (!video_writer.is_open()) {
       return;
     }
-    if (!latest_rgb.empty() &&
-        !video_writer.write_rgb888_frame(latest_rgb, width, height, video_quality)) {
+    if (!latest_frame.rgb565.empty() &&
+        !video_writer.write_rgb565_frame(latest_frame, video_quality)) {
       video_state = VideoState::Failed;
       (void)video_writer.close();
     }
   }
 
   bool request_capture() {
-    if (latest_rgb.empty() || width <= 0 || height <= 0) {
-      CameraFrame frame;
-      (void)consume_frame(frame);
-    }
-    if (latest_rgb.empty() || width <= 0 || height <= 0) {
+    if (!opened || !still_mode.valid()) {
       capture_state = CaptureState::Failed;
       return false;
     }
 
     last_capture_path_value = make_photo_path();
-    capture_state = save_jpeg_rgb888(last_capture_path_value, latest_rgb, width, height, 92)
-                        ? CaptureState::Saved
-                        : CaptureState::Failed;
+    capture_state           = CaptureState::Requested;
+
+    bool saved = false;
+    for (const auto& mode : still_modes) {
+      LOG_INFO("Switching V4L2 USB stream to still mode: {}x{} {}",
+               mode.width,
+               mode.height,
+               v4l2_format_name(mode.pixel_format));
+      if (!switch_stream_mode(mode, true)) {
+        LOG_WARN("Failed to switch V4L2 USB stream to still mode {}x{} {}; trying next still mode",
+                 mode.width,
+                 mode.height,
+                 v4l2_format_name(mode.pixel_format));
+        continue;
+      }
+      still_mode = mode;
+      saved      = capture_still_frame();
+      if (saved) {
+        break;
+      }
+      LOG_WARN("Failed to capture V4L2 USB still frame in mode {}x{} {}; trying next still mode",
+               mode.width,
+               mode.height,
+               v4l2_format_name(mode.pixel_format));
+    }
+    LOG_INFO("Restoring V4L2 USB preview stream: {}x{} {}",
+             preview_mode.width,
+             preview_mode.height,
+             v4l2_format_name(preview_mode.pixel_format));
+    if (!switch_stream_mode(preview_mode) && !reopen_preview_stream()) {
+      last_error_value = device + ": failed to restore preview stream";
+      opened           = false;
+    }
+    capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
     return capture_state == CaptureState::Saved;
   }
 
+  bool capture_still_frame() {
+    constexpr int kMaxAttempts = 20;
+    int usable_frames          = 0;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+      pollfd pfd{};
+      pfd.fd     = fd;
+      pfd.events = POLLIN;
+      if (poll(&pfd, 1, 1000) <= 0) {
+        continue;
+      }
+
+      v4l2_buffer buf{};
+      buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+      buf.memory = V4L2_MEMORY_MMAP;
+      if (!ioctl_retry(fd, VIDIOC_DQBUF, &buf)) {
+        if (errno != EAGAIN) {
+          LOG_WARN("Failed to dequeue V4L2 still buffer: {}", std::strerror(errno));
+        }
+        continue;
+      }
+
+      LOG_INFO("V4L2 still frame candidate: attempt={} size={}x{} {} bytes={}",
+               attempt + 1,
+               width,
+               height,
+               v4l2_format_name(pixel_format),
+               buf.bytesused);
+      if (++usable_frames <= kStillWarmupFrameCount) {
+        LOG_INFO("Dropping V4L2 still warmup frame {}/{}",
+                 usable_frames,
+                 kStillWarmupFrameCount);
+        (void)ioctl_retry(fd, VIDIOC_QBUF, &buf);
+        continue;
+      }
+
+      const bool saved = save_still_buffer(buf);
+      (void)ioctl_retry(fd, VIDIOC_QBUF, &buf);
+      if (saved) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool save_still_buffer(const v4l2_buffer& buf) {
+    if (buf.index >= buffers.size() || !buffers[buf.index].start || buf.bytesused == 0) {
+      return false;
+    }
+
+    const auto* data = static_cast<const uint8_t*>(buffers[buf.index].start);
+    if (pixel_format == V4L2_PIX_FMT_MJPEG) {
+      LOG_INFO("Saving V4L2 still MJPEG: {}x{} bytes={} path={}",
+               width,
+               height,
+               buf.bytesused,
+               last_capture_path_value);
+      return save_jpeg_bytes(last_capture_path_value, data, buf.bytesused);
+    }
+
+    std::vector<uint8_t> still_rgb;
+    if (!yuv422_to_rgb888(data, buf.bytesused, width, height, stride, pixel_format, still_rgb)) {
+      return false;
+    }
+    LOG_INFO("Saving V4L2 still JPEG from {}: {}x{} source_bytes={} path={}",
+             v4l2_format_name(pixel_format),
+             width,
+             height,
+             buf.bytesused,
+             last_capture_path_value);
+    return save_jpeg_rgb888(last_capture_path_value, still_rgb, width, height, 95);
+  }
+
   bool start_video_recording(int fps, int quality) {
-    if (!opened || width <= 0 || height <= 0) {
+    if (!opened || latest_frame.width <= 0 || latest_frame.height <= 0) {
       video_state      = VideoState::Failed;
       last_error_value = "V4L2 stream is not ready for video recording";
       return false;
@@ -462,7 +1321,10 @@ struct V4l2Backend::Impl {
 
     last_video_path_value = make_video_path();
     video_quality         = clamp_int(quality, 1, 100);
-    if (!video_writer.open(last_video_path_value, width, height, std::max(1, fps))) {
+    if (!video_writer.open(last_video_path_value,
+                           latest_frame.width,
+                           latest_frame.height,
+                           std::max(1, fps))) {
       video_state = VideoState::Failed;
       return false;
     }

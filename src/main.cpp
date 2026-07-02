@@ -322,52 +322,69 @@ int main() {
 
   LOG_INFO("Camera application started");
 
-  bool running             = true;
-  auto dispatch_app_action = [&running, &manager, &services](app::AppAction action) {
-    auto current                = manager.current_screen();
-    const bool is_camera_screen = current && std::dynamic_pointer_cast<viewmodel::CameraViewModel>(
-                                                 current->viewmodel()) != nullptr;
-    if (is_camera_screen) {
-      if (action == app::AppAction::ZoomOut) {
-        action = app::AppAction::Exit;
-      } else if (action == app::AppAction::ZoomIn) {
-        action = app::AppAction::ZoomOut;
-      } else if (action == app::AppAction::OpenGallery) {
-        action = app::AppAction::ZoomIn;
-      } else if (action == app::AppAction::ToggleCaptureMode) {
-        action = app::AppAction::OpenGallery;
-      }
-    }
+  bool running = true;
+  auto dispatch_app_action =
+      [&running, &manager, &services, &state_machine](app::AppAction action) {
+        if (action == app::AppAction::ToggleCameraBackend) {
+          if (services && services->camera) {
+            const service::CameraBackendPreference preference =
+                services->camera->toggle_backend_preference();
+            LOG_INFO("Camera backend toggle requested: {}",
+                     preference == service::CameraBackendPreference::Usb ? "usb" : "csi");
+          }
+          (void)state_machine.transition_to(app::AppState::Splash);
+          manager.replace_screen(app::screen_id(app::AppState::Splash));
+          if (services && services->audio) {
+            services->audio->play_click();
+          }
+          return;
+        }
 
-    const bool is_gallery_screen =
-        current &&
-        std::dynamic_pointer_cast<viewmodel::GalleryViewModel>(current->viewmodel()) != nullptr;
-    if (is_gallery_screen) {
-      if (action == app::AppAction::ZoomOut) {
-        action = app::AppAction::Exit;
-      } else if (action == app::AppAction::ZoomIn) {
-        action = app::AppAction::PanLeft;
-      } else if (action == app::AppAction::Capture) {
-        action = app::AppAction::ShowInfo;
-      } else if (action == app::AppAction::OpenGallery) {
-        action = app::AppAction::PanRight;
-      } else if (action == app::AppAction::ToggleCaptureMode) {
-        action = app::AppAction::Delete;
-      }
-    }
+        auto current = manager.current_screen();
+        const bool is_camera_screen =
+            current &&
+            std::dynamic_pointer_cast<viewmodel::CameraViewModel>(current->viewmodel()) != nullptr;
+        if (is_camera_screen) {
+          if (action == app::AppAction::ZoomOut) {
+            action = app::AppAction::Exit;
+          } else if (action == app::AppAction::ZoomIn) {
+            action = app::AppAction::ZoomOut;
+          } else if (action == app::AppAction::OpenGallery) {
+            action = app::AppAction::ZoomIn;
+          } else if (action == app::AppAction::ToggleCaptureMode) {
+            action = app::AppAction::OpenGallery;
+          }
+        }
 
-    if (action == app::AppAction::Exit) {
-      if (dispatch_action(manager, services, action)) {
-        return;
-      }
-      LOG_INFO("Exit requested by keyboard");
-      running = false;
-      request_program_exit();
-      return;
-    }
+        const bool is_gallery_screen =
+            current &&
+            std::dynamic_pointer_cast<viewmodel::GalleryViewModel>(current->viewmodel()) != nullptr;
+        if (is_gallery_screen) {
+          if (action == app::AppAction::ZoomOut) {
+            action = app::AppAction::Exit;
+          } else if (action == app::AppAction::ZoomIn) {
+            action = app::AppAction::PanLeft;
+          } else if (action == app::AppAction::Capture) {
+            action = app::AppAction::ShowInfo;
+          } else if (action == app::AppAction::OpenGallery) {
+            action = app::AppAction::PanRight;
+          } else if (action == app::AppAction::ToggleCaptureMode) {
+            action = app::AppAction::Delete;
+          }
+        }
 
-    dispatch_action(manager, services, action);
-  };
+        if (action == app::AppAction::Exit) {
+          if (dispatch_action(manager, services, action)) {
+            return;
+          }
+          LOG_INFO("Exit requested by keyboard");
+          running = false;
+          request_program_exit();
+          return;
+        }
+
+        dispatch_action(manager, services, action);
+      };
 
   input::LinuxKeypad keypad;
   keypad.set_action_callback(dispatch_app_action);

@@ -43,8 +43,9 @@ bool has_camera_keys_(int fd) {
   return test_bit_(key_bits, KEY_ESC) || test_bit_(key_bits, KEY_ENTER) ||
          test_bit_(key_bits, KEY_KPENTER) || test_bit_(key_bits, KEY_F) ||
          test_bit_(key_bits, KEY_X) || test_bit_(key_bits, KEY_Z) || test_bit_(key_bits, KEY_C) ||
-         test_bit_(key_bits, KEY_1) || test_bit_(key_bits, KEY_4) || test_bit_(key_bits, KEY_5) ||
-         test_bit_(key_bits, KEY_6) || test_bit_(key_bits, KEY_7) || test_bit_(key_bits, KEY_8);
+         test_bit_(key_bits, KEY_U) || test_bit_(key_bits, KEY_1) || test_bit_(key_bits, KEY_4) ||
+         test_bit_(key_bits, KEY_5) || test_bit_(key_bits, KEY_6) || test_bit_(key_bits, KEY_7) ||
+         test_bit_(key_bits, KEY_8);
 }
 
 bool env_enabled_(const char* name, bool fallback) {
@@ -236,6 +237,8 @@ void LinuxKeypad::push_key_event_(uint16_t code, int32_t value) {
     action_callback_(app::AppAction::Exit);
   } else if (key == 'h' || key == 'H' || key == '1') {
     action_callback_(app::AppAction::ToggleHint);
+  } else if (key == 'u' || key == 'U') {
+    action_callback_(app::AppAction::ToggleCameraBackend);
   } else if (key == '4') {
     action_callback_(app::AppAction::ZoomOut);
   } else if (key == '5') {
@@ -294,6 +297,8 @@ uint32_t LinuxKeypad::translate_key_(uint16_t code) const {
       return 'z';
     case KEY_C:
       return 'c';
+    case KEY_U:
+      return 'u';
     case KEY_1:
       return '1';
     case KEY_4:

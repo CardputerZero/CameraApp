@@ -14,6 +14,7 @@ enum class AppAction {
   OpenGallery,
   ShowInfo,
   ToggleCaptureMode,
+  ToggleCameraBackend,
   PanUp,
   PanDown,
   PanLeft,

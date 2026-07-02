@@ -96,7 +96,7 @@ cmake --preset cp0-cross -DAPP_USE_DRM=ON
 Default output:
 
 ```text
-dist/CameraApp_0.2.0_m5stack1_arm64.deb
+dist/Camera_0.2.1_m5stack1_arm64.deb
 ```
 
 Useful overrides:
