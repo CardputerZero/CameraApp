@@ -2,6 +2,9 @@
 
 #include <cstdlib>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "utils/logger.h"
 
 #ifndef APP_KEY_INPUT_DEVICE
@@ -23,6 +26,20 @@ namespace input {
 
 #if defined(__linux__)
 namespace {
+
+struct SymbolKeyMapping {
+  uint16_t code;
+  uint32_t symbol;
+};
+
+constexpr std::array<SymbolKeyMapping, 32> kSymbolKeyMappings{{
+    {26, '!'},  {27, '@'},  {39, '#'},  {40, '$'},  {41, '%'},  {43, '^'},
+    {51, '&'},  {52, '*'},  {53, '('},  {54, ')'},  {55, '~'},  {69, '`'},
+    {70, '_'},  {71, '-'},  {72, '+'},  {73, '='},  {74, '['},  {75, ']'},
+    {76, '{'},  {77, '}'},  {79, ';'},  {80, ':'},  {81, '\''}, {82, '"'},
+    {83, '<'},  {85, '>'},  {86, '\\'}, {89, '|'},  {90, ','},  {91, '.'},
+    {92, '/'},  {93, '?'},
+}};
 
 template <size_t N>
 bool test_bit_(const std::array<unsigned long, N>& bits, unsigned int bit) {
@@ -266,6 +283,12 @@ void LinuxKeypad::push_key_event_(uint16_t code, int32_t value) {
 
 uint32_t LinuxKeypad::translate_key_(uint16_t code) const {
 #if defined(__linux__)
+  for (const auto& mapping : kSymbolKeyMappings) {
+    if (mapping.code == code) {
+      return mapping.symbol;
+    }
+  }
+
   switch (code) {
     case KEY_ESC:
       return LV_KEY_ESC;

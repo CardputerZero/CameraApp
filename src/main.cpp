@@ -7,14 +7,16 @@
 #include <string>
 #include <thread>
 #include <utility>
-
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "app/app_state_machine.h"
 #include "input/linux_keypad.h"
 #include "input/sdl_keypad.h"
 #include "screens/screen.h"
 #include "screens/screen_manager.h"
 #include "services/app_services.h"
-#include "utils/json_helper.h"
+// #include "utils/json_helper.h"
 #include "utils/logger.h"
 #include "viewmodels/camera_viewmodel.h"
 #include "viewmodels/gallery_viewmodel.h"

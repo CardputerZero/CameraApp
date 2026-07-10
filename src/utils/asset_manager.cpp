@@ -5,6 +5,9 @@
 #include <fstream>
 #include <utility>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "utils/logger.h"
 
 namespace asset {

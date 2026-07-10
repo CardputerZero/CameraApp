@@ -1,0 +1,55 @@
+menuconfig CAMERA_APP_SCONS_CONFIG
+    bool "Use generated CameraApp configuration for SCons builds"
+    default y
+
+if CAMERA_APP_SCONS_CONFIG
+
+config CAMERA_APP_USE_DESKTOP
+    int "Build CameraApp desktop backend (0/1)"
+    range 0 1
+    default 1 if V9_5_LV_USE_SDL
+    default 0
+
+config CAMERA_APP_USE_DRM
+    int "Use DRM/KMS display backend (0/1)"
+    range 0 1
+    default 0
+
+config CAMERA_APP_USE_ALSA
+    int "Enable ALSA audio backend (0/1)"
+    range 0 1
+    default 1
+
+config CAMERA_APP_ALSA_PLAYBACK_DEVICE
+    string "ALSA playback device"
+    default ""
+
+config CAMERA_APP_ALSA_CAPTURE_DEVICE
+    string "ALSA capture device"
+    default ""
+
+config CAMERA_APP_KEY_INPUT_DEVICE
+    string "Linux key input device"
+    default ""
+
+config CAMERA_APP_FRAMEBUFFER_DEVICE
+    string "Framebuffer device"
+    default "/dev/fb0"
+
+config CAMERA_APP_DRM_DEVICE
+    string "DRM device"
+    default "/dev/dri/card0"
+
+config CAMERA_APP_DRM_CONNECTOR_ID
+    int "DRM connector id (-1 for auto selection)"
+    default -1
+
+config CAMERA_APP_CMAKE_ASSETS_ROOT
+    string "Optional configured assets root"
+    default ""
+
+config CAMERA_APP_SOURCE_ASSETS_ROOT
+    string "Packaged assets root"
+    default "/assets"
+
+endif

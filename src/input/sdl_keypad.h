@@ -1,5 +1,9 @@
 #pragma once
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
+
 #include <functional>
 
 #include "app/app_action.h"

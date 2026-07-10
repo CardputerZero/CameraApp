@@ -1,5 +1,8 @@
 #include "services/camera_service.h"
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "services/camera_backend_utils.h"
 #include "services/camera_interface.h"
 #include "services/libcamera_backend.h"
