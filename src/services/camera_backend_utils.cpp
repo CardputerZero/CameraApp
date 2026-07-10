@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <ctime>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "services/jpeg_metadata.h"
 #include "utils/logger.h"
 

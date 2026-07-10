@@ -9,6 +9,9 @@
 #include <system_error>
 #include <vector>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "utils/logger.h"
 
 #if !USE_DESKTOP

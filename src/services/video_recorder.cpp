@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <ctime>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#endif
 #include "services/camera_backend_utils.h"
 #include "utils/logger.h"
 

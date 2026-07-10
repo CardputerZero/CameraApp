@@ -13,10 +13,15 @@
 #include <thread>
 #include <vector>
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+#include "camera_app_config.h"
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
+#endif
 #include "utils/asset_manager.h"
 #include "utils/logger.h"
 
-#if !USE_DESKTOP && APP_USE_ALSA
+#if !defined(CAMERA_APP_SCONS_BUILD) && !USE_DESKTOP && APP_USE_ALSA
 #include <alsa/asoundlib.h>
 #endif
 
@@ -32,6 +37,7 @@ constexpr unsigned int kRecordChannels     = 1;
 constexpr unsigned int kBitsPerSample      = 16;
 constexpr size_t kPeriodFrames             = 1024;
 
+#if !defined(CAMERA_APP_SCONS_BUILD)
 struct WavData {
   unsigned int channels{0};
   unsigned int sample_rate{0};
@@ -368,10 +374,162 @@ void capture_loop(std::atomic<bool>& recording,
   LOG_INFO("Audio recording finalized: {}", path);
 }
 #endif
+#endif
 
 }  // namespace
 
 struct AudioService::Impl {
+#if defined(CAMERA_APP_SCONS_BUILD)
+  ma_engine engine{};
+  ma_device capture_device{};
+  ma_encoder capture_encoder{};
+  bool engine_initialized{false};
+  bool capture_device_initialized{false};
+  bool capture_encoder_initialized{false};
+  std::atomic<bool> recording{false};
+  std::atomic<bool> record_ok{true};
+
+  ~Impl() {
+    shutdown();
+  }
+
+  void shutdown() {
+    stop_recording();
+    if (engine_initialized) {
+      ma_engine_uninit(&engine);
+      engine_initialized = false;
+    }
+  }
+
+  bool start() {
+    if (engine_initialized) {
+      return true;
+    }
+
+    const ma_result result = ma_engine_init(nullptr, &engine);
+    if (result != MA_SUCCESS) {
+      LOG_ERROR("Miniaudio engine initialization failed: {}", static_cast<int>(result));
+      return false;
+    }
+
+    engine_initialized = true;
+    LOG_INFO("Miniaudio engine initialized");
+    return true;
+  }
+
+  bool play_asset(const char* asset_name) {
+    if (!start()) {
+      return false;
+    }
+
+    std::string path;
+    if (!asset::AssetManager::resolve_path(asset_name, path)) {
+      LOG_WARN("Audio asset not found: {}", asset_name);
+      return false;
+    }
+
+    const ma_result result = ma_engine_play_sound(&engine, path.c_str(), nullptr);
+    if (result != MA_SUCCESS) {
+      LOG_WARN("Miniaudio playback failed for {}: {}", path, static_cast<int>(result));
+      return false;
+    }
+
+    LOG_DEBUG("Miniaudio playback started: {}", path);
+    return true;
+  }
+
+  bool play_shutter() { return play_asset(kShutterAsset); }
+
+  bool play_click() { return play_asset(kPressAsset); }
+
+  static void capture_callback(ma_device* device,
+                               void* output,
+                               const void* input,
+                               ma_uint32 frame_count) {
+    auto* impl = static_cast<Impl*>(device->pUserData);
+    if (!impl || !input || !impl->capture_encoder_initialized) {
+      return;
+    }
+
+    ma_uint64 frames_written = 0;
+    const ma_result result = ma_encoder_write_pcm_frames(
+        &impl->capture_encoder, input, frame_count, &frames_written);
+    if (result != MA_SUCCESS || frames_written != frame_count) {
+      impl->record_ok = false;
+    }
+    (void)output;
+  }
+
+  bool start_recording(const std::string& path) {
+    if (path.empty()) {
+      return false;
+    }
+    if (recording.load()) {
+      return true;
+    }
+
+    record_ok = true;
+    const ma_encoder_config encoder_config =
+        ma_encoder_config_init(ma_encoding_format_wav, ma_format_s16, kRecordChannels, kRecordRate);
+    ma_result result = ma_encoder_init_file(path.c_str(), &encoder_config, &capture_encoder);
+    if (result != MA_SUCCESS) {
+      LOG_ERROR("Miniaudio encoder initialization failed for {}: {}", path, static_cast<int>(result));
+      record_ok = false;
+      return false;
+    }
+    capture_encoder_initialized = true;
+
+    ma_device_config device_config = ma_device_config_init(ma_device_type_capture);
+    device_config.capture.format   = ma_format_s16;
+    device_config.capture.channels = kRecordChannels;
+    device_config.sampleRate       = kRecordRate;
+    device_config.dataCallback     = capture_callback;
+    device_config.pUserData        = this;
+
+    result = ma_device_init(nullptr, &device_config, &capture_device);
+    if (result != MA_SUCCESS) {
+      LOG_ERROR("Miniaudio capture device initialization failed: {}", static_cast<int>(result));
+      ma_encoder_uninit(&capture_encoder);
+      capture_encoder_initialized = false;
+      record_ok = false;
+      return false;
+    }
+    capture_device_initialized = true;
+
+    result = ma_device_start(&capture_device);
+    if (result != MA_SUCCESS) {
+      LOG_ERROR("Miniaudio capture device start failed: {}", static_cast<int>(result));
+      ma_device_uninit(&capture_device);
+      capture_device_initialized = false;
+      ma_encoder_uninit(&capture_encoder);
+      capture_encoder_initialized = false;
+      record_ok = false;
+      return false;
+    }
+
+    recording = true;
+    LOG_INFO("Miniaudio recording started: {}", path);
+    return true;
+  }
+
+  bool stop_recording() {
+    if (capture_device_initialized) {
+      ma_device_stop(&capture_device);
+      ma_device_uninit(&capture_device);
+      capture_device_initialized = false;
+    }
+    if (capture_encoder_initialized) {
+      ma_encoder_uninit(&capture_encoder);
+      capture_encoder_initialized = false;
+    }
+
+    const bool was_recording = recording.exchange(false);
+    if (was_recording) {
+      LOG_INFO("Miniaudio recording stopped");
+    }
+    return record_ok.load();
+  }
+#else
   std::thread playback_thread;
   std::thread record_thread;
   std::atomic<bool> recording{false};
@@ -463,6 +621,7 @@ struct AudioService::Impl {
 #endif
     return record_ok.load();
   }
+#endif
 };
 
 AudioService::AudioService() = default;
@@ -481,6 +640,14 @@ void AudioService::start() {
     return;
   }
 
+#if defined(CAMERA_APP_SCONS_BUILD)
+  if (!impl_->start()) {
+    state_          = AudioServiceState::Error;
+    status_message_ = "Miniaudio initialization failed";
+    return;
+  }
+#endif
+
   state_          = AudioServiceState::Ready;
   status_message_ = "Audio ready";
   LOG_INFO("Audio service ready");
@@ -490,6 +657,11 @@ void AudioService::stop() {
   if (impl_ && state_ == AudioServiceState::Recording) {
     impl_->stop_recording();
   }
+#if defined(CAMERA_APP_SCONS_BUILD)
+  if (impl_) {
+    impl_->shutdown();
+  }
+#endif
 
   state_          = AudioServiceState::Idle;
   status_message_ = "Audio idle";
@@ -504,6 +676,9 @@ bool AudioService::play_shutter() {
   if (state_ == AudioServiceState::Idle) {
     start();
   }
+  if (state_ != AudioServiceState::Ready && state_ != AudioServiceState::Recording) {
+    return false;
+  }
 
   const bool ok   = impl_->play_shutter();
   status_message_ = ok ? "Shutter sound played" : "Shutter sound unavailable";
@@ -515,6 +690,9 @@ bool AudioService::play_click() {
   if (state_ == AudioServiceState::Idle) {
     start();
   }
+  if (state_ != AudioServiceState::Ready && state_ != AudioServiceState::Recording) {
+    return false;
+  }
 
   const bool ok   = impl_->play_click();
   status_message_ = ok ? "Click sound played" : "Click sound unavailable";
@@ -525,6 +703,9 @@ bool AudioService::start_recording(const std::string& path) {
   ensure_impl_();
   if (state_ == AudioServiceState::Idle) {
     start();
+  }
+  if (state_ != AudioServiceState::Ready && state_ != AudioServiceState::Recording) {
+    return false;
   }
 
   if (state_ == AudioServiceState::Recording) {
