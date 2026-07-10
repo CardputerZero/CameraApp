@@ -261,13 +261,14 @@ struct LibcameraBackend::Impl {
   std::vector<libcamera::FrameBuffer*> preview_buffers;
   std::vector<libcamera::FrameBuffer*> free_still_buffers;
   std::map<const libcamera::FrameBuffer*, MappedBuffer> mapped_buffers;
-  std::mutex mutex;
+  mutable std::mutex mutex;
   CameraFrame pending_frame;
   std::vector<uint8_t> still_rgb;
   bool new_frame{false};
   bool opened{false};
   bool streaming{false};
   std::atomic<bool> capture_requested{false};
+  bool capture_in_progress{false};
   CaptureState capture_state{CaptureState::Idle};
   VideoState video_state{VideoState::Idle};
   std::string last_capture_path;
@@ -683,6 +684,11 @@ struct LibcameraBackend::Impl {
       manager.reset();
     }
 
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      capture_requested   = false;
+      capture_in_progress = false;
+    }
     opened = false;
   }
 
@@ -701,16 +707,21 @@ struct LibcameraBackend::Impl {
       return false;
     }
 
-    last_capture_path = make_photo_path();
     {
       std::lock_guard<std::mutex> lock(mutex);
-      capture_state = CaptureState::Requested;
+      if (capture_in_progress) {
+        return false;
+      }
+      last_capture_path = make_photo_path();
+      capture_state       = CaptureState::Requested;
+      capture_in_progress = true;
     }
     capture_requested = true;
     return true;
   }
 
   bool start_video_recording(int fps, int quality) {
+    std::lock_guard<std::mutex> lock(mutex);
     if (!opened || !streaming || preview_w <= 0 || preview_h <= 0) {
       video_state = VideoState::Failed;
       last_error  = "Camera preview stream is not ready for video recording";
@@ -732,6 +743,7 @@ struct LibcameraBackend::Impl {
   }
 
   bool stop_video_recording() {
+    std::lock_guard<std::mutex> lock(mutex);
     if (!video_writer.is_open()) {
       return video_state != VideoState::Failed;
     }
@@ -739,6 +751,9 @@ struct LibcameraBackend::Impl {
     const std::string path = video_writer.path();
     const uint32_t frames  = video_writer.frame_count();
     const bool saved       = video_writer.close() && frames > 0;
+    if (!saved) {
+      (void)std::remove(path.c_str());
+    }
     last_video_path_value  = path;
     video_state            = saved ? VideoState::Saved : VideoState::Failed;
     LOG_INFO("Video recording stopped: {} frames={} saved={}", path, frames, saved);
@@ -746,6 +761,7 @@ struct LibcameraBackend::Impl {
   }
 
   VideoState consume_video_state(std::string* path) {
+    std::lock_guard<std::mutex> lock(mutex);
     const VideoState state = video_state;
     if (path) {
       *path = last_video_path_value;
@@ -1155,6 +1171,7 @@ struct LibcameraBackend::Impl {
         free_still_buffers.push_back(still_buffer);
         std::lock_guard<std::mutex> lock(mutex);
         capture_state = CaptureState::Failed;
+        capture_in_progress = false;
       } else {
         queue_still_capture = true;
       }
@@ -1224,11 +1241,14 @@ struct LibcameraBackend::Impl {
                                                       is_still,
                                                       is_still ? nullptr : &pending_frame,
                                                       is_still ? &still_rgb : nullptr);
-      if (converted && is_still) {
-        const ExifMetadata exif_metadata = build_still_exif_metadata(request, width, height);
-        const bool saved =
-            save_jpeg_rgb888(last_capture_path, still_rgb, width, height, 92, &exif_metadata);
-        capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
+      if (is_still) {
+        bool saved = false;
+        if (converted) {
+          const ExifMetadata exif_metadata = build_still_exif_metadata(request, width, height);
+          saved = save_jpeg_rgb888(last_capture_path, still_rgb, width, height, 92, &exif_metadata);
+        }
+        capture_state       = saved ? CaptureState::Saved : CaptureState::Failed;
+        capture_in_progress = false;
       } else if (converted) {
         pending_frame.width  = width;
         pending_frame.height = height;
@@ -1237,6 +1257,7 @@ struct LibcameraBackend::Impl {
             !video_writer.write_rgb565_frame(pending_frame, video_quality)) {
           video_state = VideoState::Failed;
           (void)video_writer.close();
+          (void)std::remove(last_video_path_value.c_str());
         }
       }
     }
@@ -1350,6 +1371,7 @@ std::string LibcameraBackend::last_capture_path() const {
 #if USE_DESKTOP
   return {};
 #else
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->last_capture_path;
 #endif
 }
@@ -1358,6 +1380,7 @@ std::string LibcameraBackend::last_video_path() const {
 #if USE_DESKTOP
   return {};
 #else
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->last_video_path_value;
 #endif
 }
@@ -1366,6 +1389,7 @@ std::string LibcameraBackend::last_error() const {
 #if USE_DESKTOP
   return "libcamera backend unavailable in desktop build";
 #else
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   return impl_->last_error;
 #endif
 }

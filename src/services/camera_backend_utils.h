@@ -39,6 +39,9 @@ uint8_t clip_u8(int value);
 int clamp_int(int value, int min_value, int max_value);
 int normalize_zoom_percent(int zoom_percent);
 std::string lower_string(std::string s);
+std::string make_unique_media_path(const std::string& dir,
+                                   const char* prefix,
+                                   const char* extension);
 std::string make_photo_path();
 bool save_jpeg_rgb888(const std::string& path,
                       const std::vector<uint8_t>& rgb,

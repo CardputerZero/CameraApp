@@ -212,6 +212,9 @@ bool CameraService::consume_frame(CameraFrame& frame) {
 }
 
 bool CameraService::request_capture() {
+  if (capture_state_ == CaptureState::Requested) {
+    return false;
+  }
   if (state_ != CameraServiceState::Ready) {
     capture_state_  = CaptureState::Failed;
     status_message_ = "Camera not ready";

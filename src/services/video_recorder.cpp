@@ -3,7 +3,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
-#include <ctime>
+#include <cstdlib>
 
 #include "services/camera_backend_utils.h"
 #include "utils/logger.h"
@@ -14,42 +14,6 @@
 
 namespace service::camera_backend {
 namespace {
-
-bool ensure_dir(const std::string& dir) {
-  std::string current;
-  if (!dir.empty() && dir[0] == '/') {
-    current = "/";
-  }
-
-  size_t start = current == "/" ? 1 : 0;
-  while (start <= dir.size()) {
-    const size_t slash = dir.find('/', start);
-    const std::string part =
-        dir.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
-    if (!part.empty()) {
-      if (current.size() > 1) {
-        current += "/";
-      }
-      current += part;
-
-      struct stat st{};
-      if (::stat(current.c_str(), &st) != 0) {
-        if (::mkdir(current.c_str(), 0755) != 0) {
-          return false;
-        }
-      } else if (!S_ISDIR(st.st_mode)) {
-        return false;
-      }
-    }
-
-    if (slash == std::string::npos) {
-      break;
-    }
-    start = slash + 1;
-  }
-
-  return true;
-}
 
 std::string video_dir() {
   const char* home = std::getenv("HOME");
@@ -162,19 +126,7 @@ std::vector<uint8_t> rgb565_frame_to_rgb888(const CameraFrame& frame) {
 }  // namespace
 
 std::string make_video_path() {
-  const std::string dir = video_dir();
-  (void)ensure_dir(dir);
-
-  std::time_t now = std::time(nullptr);
-  std::tm tm_now{};
-  localtime_r(&now, &tm_now);
-
-  char time_buf[64]{};
-  std::strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", &tm_now);
-
-  char path[512]{};
-  std::snprintf(path, sizeof(path), "%s/VID_%s.avi", dir.c_str(), time_buf);
-  return path;
+  return make_unique_media_path(video_dir(), "VID", "avi");
 }
 
 MjpegAviWriter::~MjpegAviWriter() {
@@ -189,7 +141,7 @@ bool MjpegAviWriter::open(const std::string& path, int width, int height, int fp
     return false;
   }
 
-  file_ = std::fopen(path.c_str(), "wb");
+  file_ = std::fopen(path.c_str(), "wbx");
   if (!file_) {
     LOG_ERROR("Failed to open video file: {}", path);
     return false;

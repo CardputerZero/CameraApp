@@ -1,12 +1,16 @@
 #include "services/v4l2_backend.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -539,17 +543,19 @@ bool save_jpeg_bytes(const std::string& path, const uint8_t* data, size_t size) 
     return false;
   }
 
-  FILE* fp = std::fopen(path.c_str(), "wb");
+  FILE* fp = std::fopen(path.c_str(), "wbx");
   if (!fp) {
     LOG_ERROR("Failed to open jpeg file: {}", path);
     return false;
   }
   const bool ok = std::fwrite(data, 1, size, fp) == size;
-  std::fclose(fp);
-  if (ok) {
+  const bool closed = std::fclose(fp) == 0;
+  if (ok && closed) {
     (void)::chmod(path.c_str(), 0644);
+  } else {
+    (void)std::remove(path.c_str());
   }
-  return ok;
+  return ok && closed;
 }
 
 bool rgb888_to_scaled_preview_frame(const std::vector<uint8_t>& rgb,
@@ -699,6 +705,12 @@ bool yuv422_to_rgb888(const uint8_t* data,
 
 struct V4l2Backend::Impl {
 #if !USE_DESKTOP
+  mutable std::mutex device_mutex;
+  mutable std::mutex state_mutex;
+  mutable std::mutex zoom_mutex;
+  std::thread capture_thread;
+  std::atomic<bool> capture_cancel{false};
+  std::atomic<bool> capture_in_progress{false};
   int fd{-1};
   std::string device;
   std::vector<Buffer> buffers;
@@ -1096,7 +1108,12 @@ struct V4l2Backend::Impl {
   }
 
   void close() {
+    capture_cancel = true;
+    if (capture_thread.joinable()) {
+      capture_thread.join();
+    }
     (void)stop_video_recording();
+    std::lock_guard<std::mutex> device_lock(device_mutex);
     stop_streaming();
     opened = false;
 
@@ -1109,6 +1126,10 @@ struct V4l2Backend::Impl {
   }
 
   bool consume_frame(CameraFrame& frame) {
+    std::unique_lock<std::mutex> device_lock(device_mutex, std::try_to_lock);
+    if (!device_lock.owns_lock()) {
+      return false;
+    }
     if (!opened || !streaming || buffers.empty()) {
       return false;
     }
@@ -1153,6 +1174,11 @@ struct V4l2Backend::Impl {
     }
 
     const auto* data = static_cast<const uint8_t*>(buffers[buf.index].start);
+    CameraZoomState current_zoom;
+    {
+      std::lock_guard<std::mutex> zoom_lock(zoom_mutex);
+      current_zoom = zoom_state;
+    }
     if (pixel_format == V4L2_PIX_FMT_MJPEG) {
       int jpeg_w = 0;
       int jpeg_h = 0;
@@ -1161,7 +1187,7 @@ struct V4l2Backend::Impl {
       }
       width  = jpeg_w;
       height = jpeg_h;
-      if (!rgb888_to_scaled_preview_frame(latest_rgb, width, height, zoom_state, latest_frame)) {
+      if (!rgb888_to_scaled_preview_frame(latest_rgb, width, height, current_zoom, latest_frame)) {
         return false;
       }
       write_video_frame();
@@ -1174,7 +1200,7 @@ struct V4l2Backend::Impl {
                                         height,
                                         stride,
                                         pixel_format,
-                                        zoom_state,
+                                        current_zoom,
                                         latest_frame)) {
       return false;
     }
@@ -1190,20 +1216,65 @@ struct V4l2Backend::Impl {
         !video_writer.write_rgb565_frame(latest_frame, video_quality)) {
       video_state = VideoState::Failed;
       (void)video_writer.close();
+      (void)std::remove(last_video_path_value.c_str());
     }
   }
 
   bool request_capture() {
-    if (!opened || !still_mode.valid()) {
-      capture_state = CaptureState::Failed;
+    if (capture_in_progress.exchange(true)) {
       return false;
     }
 
-    last_capture_path_value = make_photo_path();
-    capture_state           = CaptureState::Requested;
+    {
+      std::lock_guard<std::mutex> device_lock(device_mutex);
+      if (!opened || !still_mode.valid()) {
+        capture_in_progress = false;
+        std::lock_guard<std::mutex> state_lock(state_mutex);
+        capture_state = CaptureState::Failed;
+        return false;
+      }
+    }
 
+    if (capture_thread.joinable()) {
+      capture_thread.join();
+    }
+    {
+      std::lock_guard<std::mutex> state_lock(state_mutex);
+      last_capture_path_value = make_photo_path();
+      capture_state           = CaptureState::Requested;
+    }
+    capture_cancel = false;
+    try {
+      capture_thread = std::thread([this]() {
+        bool saved = false;
+        {
+          std::lock_guard<std::mutex> device_lock(device_mutex);
+          if (!capture_cancel.load()) {
+            saved = perform_capture();
+          }
+        }
+        {
+          std::lock_guard<std::mutex> state_lock(state_mutex);
+          capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
+        }
+        capture_in_progress = false;
+      });
+    } catch (const std::system_error& error) {
+      LOG_ERROR("Failed to start V4L2 capture worker: {}", error.what());
+      std::lock_guard<std::mutex> state_lock(state_mutex);
+      capture_state       = CaptureState::Failed;
+      capture_in_progress = false;
+      return false;
+    }
+    return true;
+  }
+
+  bool perform_capture() {
     bool saved = false;
     for (const auto& mode : still_modes) {
+      if (capture_cancel.load()) {
+        break;
+      }
       LOG_INFO("Switching V4L2 USB stream to still mode: {}x{} {}",
                mode.width,
                mode.height,
@@ -1233,18 +1304,20 @@ struct V4l2Backend::Impl {
       last_error_value = device + ": failed to restore preview stream";
       opened           = false;
     }
-    capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
-    return capture_state == CaptureState::Saved;
+    return saved;
   }
 
   bool capture_still_frame() {
-    constexpr int kMaxAttempts = 20;
+    constexpr int kMaxAttempts = 200;
     int usable_frames          = 0;
     for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+      if (capture_cancel.load()) {
+        return false;
+      }
       pollfd pfd{};
       pfd.fd     = fd;
       pfd.events = POLLIN;
-      if (poll(&pfd, 1, 1000) <= 0) {
+      if (poll(&pfd, 1, 100) <= 0) {
         continue;
       }
 
@@ -1310,6 +1383,7 @@ struct V4l2Backend::Impl {
   }
 
   bool start_video_recording(int fps, int quality) {
+    std::lock_guard<std::mutex> device_lock(device_mutex);
     if (!opened || latest_frame.width <= 0 || latest_frame.height <= 0) {
       video_state      = VideoState::Failed;
       last_error_value = "V4L2 stream is not ready for video recording";
@@ -1334,6 +1408,7 @@ struct V4l2Backend::Impl {
   }
 
   bool stop_video_recording() {
+    std::lock_guard<std::mutex> device_lock(device_mutex);
     if (!video_writer.is_open()) {
       return video_state != VideoState::Failed;
     }
@@ -1341,6 +1416,9 @@ struct V4l2Backend::Impl {
     const std::string path = video_writer.path();
     const uint32_t frames  = video_writer.frame_count();
     const bool saved       = video_writer.close() && frames > 0;
+    if (!saved) {
+      (void)std::remove(path.c_str());
+    }
     last_video_path_value  = path;
     video_state            = saved ? VideoState::Saved : VideoState::Failed;
     LOG_INFO("Video recording stopped: {} frames={} saved={}", path, frames, saved);
@@ -1348,11 +1426,13 @@ struct V4l2Backend::Impl {
   }
 
   void set_capture_resolution(CameraResolution resolution) {
+    std::lock_guard<std::mutex> device_lock(device_mutex);
     capture_resolution.width  = clamp_int(resolution.width, 1, kSensorMaxWidth);
     capture_resolution.height = clamp_int(resolution.height, 1, kSensorMaxHeight);
   }
 
   void set_zoom_state(CameraZoomState state) {
+    std::lock_guard<std::mutex> zoom_lock(zoom_mutex);
     zoom_state.zoom_percent   = normalize_zoom_percent(state.zoom_percent);
     zoom_state.view_x_percent = clamp_int(state.view_x_percent, 0, 100);
     zoom_state.view_y_percent = clamp_int(state.view_y_percent, 0, 100);
@@ -1363,6 +1443,7 @@ struct V4l2Backend::Impl {
   }
 
   CaptureState consume_capture_state(std::string* path) {
+    std::lock_guard<std::mutex> state_lock(state_mutex);
     const CaptureState state = capture_state;
     if (path) {
       *path = last_capture_path_value;
@@ -1374,6 +1455,7 @@ struct V4l2Backend::Impl {
   }
 
   VideoState consume_video_state(std::string* path) {
+    std::lock_guard<std::mutex> device_lock(device_mutex);
     const VideoState state = video_state;
     if (path) {
       *path = last_video_path_value;
@@ -1484,6 +1566,7 @@ std::string V4l2Backend::last_capture_path() const {
 #if USE_DESKTOP
   return {};
 #else
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
   return impl_->last_capture_path_value;
 #endif
 }
@@ -1492,6 +1575,7 @@ std::string V4l2Backend::last_video_path() const {
 #if USE_DESKTOP
   return {};
 #else
+  std::lock_guard<std::mutex> lock(impl_->device_mutex);
   return impl_->last_video_path_value;
 #endif
 }
@@ -1500,6 +1584,7 @@ std::string V4l2Backend::last_error() const {
 #if USE_DESKTOP
   return "V4L2 backend unavailable in desktop build";
 #else
+  std::lock_guard<std::mutex> lock(impl_->device_mutex);
   return impl_->last_error_value;
 #endif
 }

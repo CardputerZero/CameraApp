@@ -3,7 +3,9 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -263,20 +265,42 @@ std::string lower_string(std::string s) {
   return s;
 }
 
-std::string make_photo_path() {
-  const std::string dir = pictures_dir();
+std::string make_unique_media_path(const std::string& dir,
+                                   const char* prefix,
+                                   const char* extension) {
+  static std::atomic<uint64_t> sequence{0};
   (void)ensure_dir(dir);
 
-  std::time_t now = std::time(nullptr);
+  const auto now = std::chrono::system_clock::now();
+  const auto micros =
+      std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+  std::time_t time = std::chrono::system_clock::to_time_t(now);
   std::tm tm_now{};
-  localtime_r(&now, &tm_now);
-
-  char time_buf[64]{};
+  localtime_r(&time, &tm_now);
+  char time_buf[32]{};
   std::strftime(time_buf, sizeof(time_buf), "%Y%m%d_%H%M%S", &tm_now);
 
-  char path[512]{};
-  std::snprintf(path, sizeof(path), "%s/CAM_%s.jpg", dir.c_str(), time_buf);
-  return path;
+  for (;;) {
+    const uint64_t suffix = sequence.fetch_add(1, std::memory_order_relaxed);
+    char path[768]{};
+    std::snprintf(path,
+                  sizeof(path),
+                  "%s/%s_%s_%06lld_%llu.%s",
+                  dir.c_str(),
+                  prefix,
+                  time_buf,
+                  static_cast<long long>(micros % 1000000),
+                  static_cast<unsigned long long>(suffix),
+                  extension);
+    struct stat st{};
+    if (::stat(path, &st) != 0) {
+      return path;
+    }
+  }
+}
+
+std::string make_photo_path() {
+  return make_unique_media_path(pictures_dir(), "CAM", "jpg");
 }
 
 bool save_jpeg_rgb888(const std::string& path,
@@ -290,7 +314,7 @@ bool save_jpeg_rgb888(const std::string& path,
     return false;
   }
 
-  FILE* fp = std::fopen(path.c_str(), "wb");
+  FILE* fp = std::fopen(path.c_str(), "wbx");
   if (!fp) {
     LOG_ERROR("Failed to open jpeg file: {}", path);
     return false;
@@ -332,8 +356,13 @@ bool save_jpeg_rgb888(const std::string& path,
   }
 
   jpeg_finish_compress(&cinfo);
+  const bool ok = std::ferror(fp) == 0;
   jpeg_destroy_compress(&cinfo);
-  std::fclose(fp);
+  const bool closed = std::fclose(fp) == 0;
+  if (!ok || !closed) {
+    (void)std::remove(path.c_str());
+    return false;
+  }
   (void)::chmod(path.c_str(), 0644);
   return true;
 #else

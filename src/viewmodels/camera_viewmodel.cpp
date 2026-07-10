@@ -52,11 +52,9 @@ bool CameraViewModel::handle_action(app::AppAction action) {
   }
 
   if (action == app::AppAction::Capture || action == app::AppAction::Confirm) {
-    capture_feedback_ = true;
-    if (services_ && services_->camera) {
-      services_->camera->request_capture();
-    }
-    return true;
+    capture_feedback_ =
+        services_ && services_->camera && services_->camera->request_capture();
+    return capture_feedback_;
   }
 
   if (action == app::AppAction::ZoomOut) {

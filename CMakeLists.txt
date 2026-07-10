@@ -502,3 +502,20 @@ if(NOT USE_DESKTOP)
 endif()
 
 include(cmake/cm0-package.cmake)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(camera_app_core_tests tests/core_tests.cpp)
+    target_include_directories(camera_app_core_tests PRIVATE ${APP_COMMON_INCLUDE_DIRS})
+    target_compile_definitions(camera_app_core_tests PRIVATE
+        USE_DESKTOP=$<BOOL:${USE_DESKTOP}>
+        APP_USE_DRM=0
+    )
+    target_link_libraries(camera_app_core_tests PRIVATE
+        ${PROJECT_NAME}_viewmodels
+        ${PROJECT_NAME}_services
+        lvgl::lvgl
+        Threads::Threads
+    )
+    add_test(NAME camera_app_core_tests COMMAND camera_app_core_tests)
+endif()

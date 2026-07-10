@@ -63,12 +63,6 @@ class ScreenManager {
       return false;
     }
 
-    // Hide the current screen.
-    if (!screen_stack_.empty()) {
-      auto current = screen_stack_.top();
-      current->hide();
-    }
-
     // Find or create the screen.
     std::shared_ptr<Screen> screen;
     auto it = screens_.find(screen_id);
@@ -81,6 +75,11 @@ class ScreenManager {
 
     if (!screen) {
       return false;
+    }
+
+    // Only leave the current screen after the target has been created successfully.
+    if (!screen_stack_.empty()) {
+      screen_stack_.top()->hide();
     }
 
     // Show the new screen.
@@ -117,8 +116,23 @@ class ScreenManager {
    * @brief Replace the current screen.
    */
   bool replace_screen(const std::string& screen_id) {
-    pop_screen();
-    return push_screen(screen_id);
+    auto factory = factories_.find(screen_id);
+    if (factory == factories_.end()) {
+      return false;
+    }
+
+    std::shared_ptr<Screen> replacement = factory->second(root_);
+    if (!replacement) {
+      return false;
+    }
+
+    if (!screen_stack_.empty()) {
+      screen_stack_.top()->hide();
+      screen_stack_.pop();
+    }
+    replacement->show();
+    screen_stack_.push(std::move(replacement));
+    return true;
   }
 
   /**
