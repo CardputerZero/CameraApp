@@ -44,6 +44,8 @@ namespace {
 using namespace camera_backend;
 constexpr unsigned int kHighResolutionBufferCount = 4;
 constexpr unsigned int kFallbackBufferCount       = 3;
+constexpr int64_t kPreviewMinFrameDurationUs      = 16667;
+constexpr int64_t kPreviewMaxFrameDurationUs      = 33333;
 
 #if !USE_DESKTOP
 void sync_dma_buf(int fd, uint64_t flags) {
@@ -835,6 +837,8 @@ struct LibcameraBackend::Impl {
       const CameraZoomState state = current_zoom_state();
       request->controls().set(libcamera::controls::ScalerCrop, scaler_crop_for_zoom_state(state));
     }
+    request->controls().set(libcamera::controls::FrameDurationLimits,
+                            {kPreviewMinFrameDurationUs, kPreviewMaxFrameDurationUs});
   }
 
   ExifMetadata build_still_exif_metadata(const libcamera::Request* request, int width, int height) {

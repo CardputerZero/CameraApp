@@ -286,9 +286,11 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
     return;
   }
 
-  preview_owner = nullptr;
-  preview_limiter.reset();
-  preview_stats_started_ms = 0;
+  if (!camera_vm || !camera_view) {
+    preview_owner = nullptr;
+    preview_limiter.reset();
+    preview_stats_started_ms = 0;
+  }
 
   app::AppState requested_state = vm->consume_transition_request();
   if (requested_state == app::AppState::None) {
