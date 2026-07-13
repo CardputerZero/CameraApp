@@ -14,6 +14,7 @@
 #include "camera_app_config.h"
 #endif
 #include "services/camera_backend_utils.h"
+#include "services/camera_frame_pool.h"
 #include "services/video_recorder.h"
 #include "utils/logger.h"
 
@@ -571,8 +572,11 @@ bool rgb888_to_scaled_preview_frame(const std::vector<uint8_t>& rgb,
       preview_crop_for_source(src_width, src_height, out_width, out_height, zoom_state);
   frame.width  = out_width;
   frame.height = out_height;
-  frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
-      static_cast<size_t>(out_width) * out_height, 0);
+  const size_t pixel_count = static_cast<size_t>(out_width) * out_height;
+  if (!frame.rgb565) {
+    frame.rgb565 = std::make_shared<std::vector<uint16_t>>();
+  }
+  frame.rgb565->resize(pixel_count);
 
   for (int y = 0; y < out_height; ++y) {
     const int src_y = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
@@ -621,8 +625,11 @@ bool yuv422_to_scaled_preview_frame(const uint8_t* data,
   const bool is_yuyv = pixel_format == V4L2_PIX_FMT_YUYV;
   frame.width        = out_width;
   frame.height       = out_height;
-  frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
-      static_cast<size_t>(out_width) * out_height, 0);
+  const size_t pixel_count = static_cast<size_t>(out_width) * out_height;
+  if (!frame.rgb565) {
+    frame.rgb565 = std::make_shared<std::vector<uint16_t>>();
+  }
+  frame.rgb565->resize(pixel_count);
 
   for (int y = 0; y < out_height; ++y) {
     const int src_y     = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
@@ -715,6 +722,7 @@ struct V4l2Backend::Impl {
   CameraResolution capture_resolution{kDefaultCaptureWidth, kDefaultCaptureHeight};
   CameraZoomState zoom_state{};
   CameraFrame latest_frame;
+  CameraFramePool preview_pool{3};
   bool new_frame{false};
   std::vector<uint8_t> latest_rgb;
   CaptureState capture_state{CaptureState::Idle};
@@ -1158,6 +1166,11 @@ struct V4l2Backend::Impl {
     }
 
     const auto* data = static_cast<const uint8_t*>(buffers[buf.index].start);
+    latest_frame.rgb565 = preview_pool.acquire(
+        static_cast<size_t>(kPreviewOutputMaxWidth) * kPreviewOutputHeight);
+    if (!latest_frame.rgb565) {
+      return false;
+    }
     if (pixel_format == V4L2_PIX_FMT_MJPEG) {
       int jpeg_w = 0;
       int jpeg_h = 0;

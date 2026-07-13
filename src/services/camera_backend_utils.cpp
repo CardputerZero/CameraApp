@@ -436,8 +436,10 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
   if (is_rgb565 && !is_still && preview_frame && !rotate_180) {
     preview_frame->width  = width;
     preview_frame->height = height;
-    preview_frame->rgb565 =
-        std::make_shared<std::vector<uint16_t>>(static_cast<size_t>(width) * height);
+    const size_t pixel_count = static_cast<size_t>(width) * height;
+    if (!preview_frame->rgb565 || preview_frame->rgb565->size() != pixel_count) {
+      preview_frame->rgb565 = std::make_shared<std::vector<uint16_t>>(pixel_count);
+    }
     auto* dst = reinterpret_cast<uint8_t*>(preview_frame->rgb565->data());
     for (int y = 0; y < height; ++y) {
       const size_t offset = static_cast<size_t>(y) * row_stride;

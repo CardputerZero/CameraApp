@@ -16,6 +16,7 @@
 #include "screens/screen.h"
 #include "screens/screen_manager.h"
 #include "services/app_services.h"
+#include "services/preview_frame_limiter.h"
 // #include "utils/json_helper.h"
 #include "utils/logger.h"
 #include "viewmodels/camera_viewmodel.h"
@@ -233,8 +234,8 @@ void setup_screen_manager(screen::ScreenManager& manager,
 
 void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& state_machine) {
   static view::CameraView* preview_owner = nullptr;
-  static service::CameraFrame pending_preview;
-  static uint32_t last_preview_ms = 0;
+  static service::PreviewFrameLimiter preview_limiter;
+  static uint32_t preview_stats_started_ms = 0;
   auto current = manager.current_screen();
   if (!current) {
     LOG_ERROR("Failed to get current screen...");
@@ -244,20 +245,26 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
   auto camera_vm   = std::dynamic_pointer_cast<viewmodel::CameraViewModel>(current->viewmodel());
   auto camera_view = dynamic_cast<view::CameraView*>(current->view());
   if (camera_vm && camera_view) {
+    if (preview_owner != camera_view) {
+      preview_owner = camera_view;
+      preview_limiter.reset();
+      preview_stats_started_ms = app_tick_ms();
+    }
     service::CameraFrame frame;
     if (camera_vm->consume_frame(frame)) {
-      pending_preview = std::move(frame);
-    }
-    if (preview_owner != camera_view) {
-      preview_owner   = camera_view;
-      last_preview_ms = 0;
+      preview_limiter.push(std::move(frame));
     }
     const uint32_t now = app_tick_ms();
-    if (pending_preview.valid() &&
-        (last_preview_ms == 0 || static_cast<uint32_t>(now - last_preview_ms) >= 33)) {
-      camera_view->set_preview_frame(pending_preview);
-      pending_preview = {};
-      last_preview_ms = now;
+    if (preview_limiter.take(now, frame)) {
+      camera_view->set_preview_frame(frame);
+      const uint64_t presented = preview_limiter.presented_frames();
+      if (presented % 300 == 0) {
+        const uint32_t elapsed = now - preview_stats_started_ms;
+        LOG_INFO("Preview display stats: presented={} coalesced={} fps={}",
+                 presented,
+                 preview_limiter.coalesced_frames(),
+                 elapsed ? presented * 1000 / elapsed : 0);
+      }
     }
     camera_view->set_zoom_state(camera_vm->zoom_state());
 
@@ -279,9 +286,9 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
     return;
   }
 
-  preview_owner   = nullptr;
-  pending_preview = {};
-  last_preview_ms = 0;
+  preview_owner = nullptr;
+  preview_limiter.reset();
+  preview_stats_started_ms = 0;
 
   app::AppState requested_state = vm->consume_transition_request();
   if (requested_state == app::AppState::None) {

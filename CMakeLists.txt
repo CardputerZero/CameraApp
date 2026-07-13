@@ -25,6 +25,7 @@ set(APP_ALSA_PLAYBACK_DEVICE "" CACHE STRING "Optional ALSA playback PCM device,
 set(APP_ALSA_CAPTURE_DEVICE "" CACHE STRING "Optional ALSA capture PCM device, e.g. plughw:0,0")
 set(APP_USE_DRM OFF CACHE BOOL "Enable LVGL Linux DRM/KMS backend for embedded Linux builds")
 set(CM0_ALLOW_FETCH_DEPS ON CACHE BOOL "Allow downloading missing CM0 BSP/dependencies during cross builds")
+option(CAMERA_APP_BUILD_TESTS "Build CameraApp unit tests" OFF)
 
 include(FetchContent)
 find_package(Threads REQUIRED)
@@ -439,6 +440,13 @@ target_compile_definitions(${PROJECT_NAME}_services PUBLIC
     APP_ALSA_CAPTURE_DEVICE="${APP_ALSA_CAPTURE_DEVICE}"
 )
 target_link_libraries(${PROJECT_NAME}_services PUBLIC ${PROJECT_NAME}_utils ${APP_DEP_LIBS})
+
+if(CAMERA_APP_BUILD_TESTS)
+    enable_testing()
+    add_executable(camera_preview_test tests/camera_preview_test.cpp)
+    target_include_directories(camera_preview_test PRIVATE ${APP_SOURCE_DIR})
+    add_test(NAME camera_preview_test COMMAND camera_preview_test)
+endif()
 
 add_library(${PROJECT_NAME}_viewmodels STATIC
     src/viewmodels/splash_viewmodel.cpp

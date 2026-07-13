@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
@@ -12,6 +13,7 @@
 #include "camera_app_config.h"
 #endif
 #include "services/camera_backend_utils.h"
+#include "services/camera_frame_pool.h"
 #include "services/jpeg_metadata.h"
 #include "services/video_recorder.h"
 #include "utils/logger.h"
@@ -266,8 +268,9 @@ struct LibcameraBackend::Impl {
   std::vector<libcamera::FrameBuffer*> free_still_buffers;
   std::map<const libcamera::FrameBuffer*, MappedBuffer> mapped_buffers;
   std::mutex mutex;
+  std::mutex video_mutex;
   CameraFrame pending_frame;
-  std::vector<uint8_t> still_rgb;
+  CameraFramePool preview_pool{3};
   bool new_frame{false};
   bool opened{false};
   bool streaming{false};
@@ -286,7 +289,11 @@ struct LibcameraBackend::Impl {
   int preview_h{kPreviewHeight};
   int preview_stride{kPreviewWidth * 2};
   libcamera::PixelFormat preview_format{libcamera::formats::RGB565};
-  bool hardware_rotation{false};
+  bool pipeline_rotation{false};
+  std::atomic<uint64_t> preview_input_frames{0};
+  std::atomic<uint64_t> preview_published_frames{0};
+  std::atomic<uint64_t> preview_dropped_frames{0};
+  std::atomic<uint64_t> preview_convert_us{0};
   int still_w{kDefaultCaptureWidth};
   int still_h{kDefaultCaptureHeight};
   int still_stride{kDefaultCaptureWidth};
@@ -335,8 +342,8 @@ struct LibcameraBackend::Impl {
       return false;
     }
 
-    hardware_rotation = config->orientation == libcamera::Orientation::Rotate180;
-    LOG_INFO("Camera orientation: requested=Rotate180 hardware={}", hardware_rotation);
+    pipeline_rotation = config->orientation == libcamera::Orientation::Rotate180;
+    LOG_INFO("Camera orientation: requested=Rotate180 pipeline={}", pipeline_rotation);
 
     if (camera->configure(config.get())) {
       last_error = "Camera configure failed";
@@ -380,7 +387,6 @@ struct LibcameraBackend::Impl {
       pending_frame.height = kPreviewHeight;
       pending_frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
           kPreviewWidth * kPreviewHeight, 0);
-      still_rgb.assign(still_w * still_h * 3, 0);
     }
 
     allocator                   = std::make_unique<libcamera::FrameBufferAllocator>(camera);
@@ -711,16 +717,17 @@ struct LibcameraBackend::Impl {
       return false;
     }
 
-    last_capture_path = make_photo_path();
     {
       std::lock_guard<std::mutex> lock(mutex);
-      capture_state = CaptureState::Requested;
+      last_capture_path = make_photo_path();
+      capture_state     = CaptureState::Requested;
     }
     capture_requested = true;
     return true;
   }
 
   bool start_video_recording(int fps, int quality) {
+    std::lock_guard<std::mutex> video_lock(video_mutex);
     if (!opened || !streaming || preview_w <= 0 || preview_h <= 0) {
       video_state = VideoState::Failed;
       last_error  = "Camera preview stream is not ready for video recording";
@@ -742,6 +749,7 @@ struct LibcameraBackend::Impl {
   }
 
   bool stop_video_recording() {
+    std::lock_guard<std::mutex> video_lock(video_mutex);
     if (!video_writer.is_open()) {
       return video_state != VideoState::Failed;
     }
@@ -1224,17 +1232,37 @@ struct LibcameraBackend::Impl {
     }
 
     CameraFrame converted_frame;
+    if (!is_still) {
+      ++preview_input_frames;
+      converted_frame.width  = width;
+      converted_frame.height = height;
+      converted_frame.rgb565 = preview_pool.acquire(static_cast<size_t>(width) * height);
+      if (!converted_frame.rgb565) {
+        ++preview_dropped_frames;
+        for (const auto& plane : mapped.planes) {
+          sync_dma_buf(plane.fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+        }
+        return;
+      }
+    }
     std::vector<uint8_t> converted_still;
+    const auto convert_started = std::chrono::steady_clock::now();
     const bool converted = convert_frame_to_outputs(plane_data,
-                                                      bytes_used,
-                                                      width,
-                                                      height,
-                                                      stride,
-                                                      map_libcamera_format(format),
-                                                      is_still,
-                                                      is_still ? nullptr : &converted_frame,
-                                                      is_still ? &converted_still : nullptr,
-                                                      !hardware_rotation);
+                                                     bytes_used,
+                                                     width,
+                                                     height,
+                                                     stride,
+                                                     map_libcamera_format(format),
+                                                     is_still,
+                                                     is_still ? nullptr : &converted_frame,
+                                                     is_still ? &converted_still : nullptr,
+                                                     !pipeline_rotation);
+    if (!is_still) {
+      preview_convert_us += static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - convert_started)
+              .count());
+    }
     if (converted && is_still) {
       std::string capture_path;
       {
@@ -1249,14 +1277,30 @@ struct LibcameraBackend::Impl {
         capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
       }
     } else if (converted) {
-      std::lock_guard<std::mutex> lock(mutex);
-        pending_frame = std::move(converted_frame);
-        new_frame            = true;
+      bool video_failed = false;
+      {
+        std::lock_guard<std::mutex> video_lock(video_mutex);
         if (video_writer.is_open() &&
-            !video_writer.write_rgb565_frame(pending_frame, video_quality)) {
-          video_state = VideoState::Failed;
+            !video_writer.write_rgb565_frame(converted_frame, video_quality)) {
+          video_failed = true;
           (void)video_writer.close();
         }
+      }
+      std::lock_guard<std::mutex> lock(mutex);
+      pending_frame = std::move(converted_frame);
+      new_frame     = true;
+      const uint64_t published = ++preview_published_frames;
+      if (video_failed) {
+        video_state = VideoState::Failed;
+      }
+      if (published % 300 == 0) {
+        const uint64_t input = preview_input_frames.load();
+        LOG_INFO("Camera preview stats: input={} published={} dropped={} avg_convert_us={}",
+                 input,
+                 published,
+                 preview_dropped_frames.load(),
+                 input ? preview_convert_us.load() / input : 0);
+      }
     }
 
     for (const auto& plane : mapped.planes) {
