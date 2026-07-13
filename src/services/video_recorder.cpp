@@ -145,7 +145,7 @@ bool encode_jpeg_rgb888(const std::vector<uint8_t>& rgb,
 std::vector<uint8_t> rgb565_frame_to_rgb888(const CameraFrame& frame) {
   std::vector<uint8_t> rgb;
   if (frame.width <= 0 || frame.height <= 0 ||
-      frame.rgb565.size() < static_cast<size_t>(frame.width * frame.height)) {
+      !frame.rgb565 || frame.rgb565->size() < static_cast<size_t>(frame.width * frame.height)) {
     return rgb;
   }
 
@@ -154,7 +154,7 @@ std::vector<uint8_t> rgb565_frame_to_rgb888(const CameraFrame& frame) {
     uint8_t r = 0;
     uint8_t g = 0;
     uint8_t b = 0;
-    rgb565_to_rgb888(frame.rgb565[static_cast<size_t>(i)], r, g, b);
+    rgb565_to_rgb888((*frame.rgb565)[static_cast<size_t>(i)], r, g, b);
     rgb[static_cast<size_t>(i) * 3]     = r;
     rgb[static_cast<size_t>(i) * 3 + 1] = g;
     rgb[static_cast<size_t>(i) * 3 + 2] = b;

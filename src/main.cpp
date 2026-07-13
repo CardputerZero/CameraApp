@@ -232,6 +232,9 @@ void setup_screen_manager(screen::ScreenManager& manager,
 }
 
 void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& state_machine) {
+  static view::CameraView* preview_owner = nullptr;
+  static service::CameraFrame pending_preview;
+  static uint32_t last_preview_ms = 0;
   auto current = manager.current_screen();
   if (!current) {
     LOG_ERROR("Failed to get current screen...");
@@ -243,7 +246,18 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
   if (camera_vm && camera_view) {
     service::CameraFrame frame;
     if (camera_vm->consume_frame(frame)) {
-      camera_view->set_preview_frame(frame);
+      pending_preview = std::move(frame);
+    }
+    if (preview_owner != camera_view) {
+      preview_owner   = camera_view;
+      last_preview_ms = 0;
+    }
+    const uint32_t now = app_tick_ms();
+    if (pending_preview.valid() &&
+        (last_preview_ms == 0 || static_cast<uint32_t>(now - last_preview_ms) >= 33)) {
+      camera_view->set_preview_frame(pending_preview);
+      pending_preview = {};
+      last_preview_ms = now;
     }
     camera_view->set_zoom_state(camera_vm->zoom_state());
 
@@ -264,6 +278,10 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
     LOG_ERROR("Failed to get current viewmodel");
     return;
   }
+
+  preview_owner   = nullptr;
+  pending_preview = {};
+  last_preview_ms = 0;
 
   app::AppState requested_state = vm->consume_transition_request();
   if (requested_state == app::AppState::None) {

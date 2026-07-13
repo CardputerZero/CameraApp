@@ -95,7 +95,7 @@ bool CameraViewModel::consume_frame(service::CameraFrame& frame) {
     return false;
   }
 
-  frame      = latest_frame_;
+  frame      = std::move(latest_frame_);
   new_frame_ = false;
   return true;
 }

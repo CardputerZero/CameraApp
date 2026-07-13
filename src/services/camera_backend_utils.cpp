@@ -77,10 +77,10 @@ void store_rgb565_preview_pixel(CameraFrame& frame,
                                 uint8_t r,
                                 uint8_t g,
                                 uint8_t b) {
-  if (frame.rgb565.size() != static_cast<size_t>(width * height)) {
-    return;
+  if (!frame.rgb565 || frame.rgb565->size() != static_cast<size_t>(width * height)) {
+    frame.rgb565 = std::make_shared<std::vector<uint16_t>>(width * height, 0);
   }
-  frame.rgb565[idx] = rgb888_to_rgb565(r, g, b);
+  (*frame.rgb565)[idx] = rgb888_to_rgb565(r, g, b);
 }
 
 bool convert_yuv420_frame(const std::vector<const uint8_t*>& planes,
@@ -90,7 +90,8 @@ bool convert_yuv420_frame(const std::vector<const uint8_t*>& planes,
                           int stride,
                           bool is_still,
                           CameraFrame* preview_frame,
-                          std::vector<uint8_t>* still_rgb) {
+                          std::vector<uint8_t>* still_rgb,
+                          bool rotate_180) {
   const int y_stride         = stride > 0 ? stride : width;
   const int uv_stride        = std::max(1, y_stride / 2);
   const int uv_height        = (height + 1) / 2;
@@ -135,9 +136,9 @@ bool convert_yuv420_frame(const std::vector<const uint8_t*>& planes,
   }
 
   for (int y = 0; y < height; ++y) {
-    const int dst_y = height - 1 - y;
+    const int dst_y = rotate_180 ? height - 1 - y : y;
     for (int x = 0; x < width; ++x) {
-      const int dst_x  = width - 1 - x;
+      const int dst_x  = rotate_180 ? width - 1 - x : x;
       const int idx    = dst_y * width + dst_x;
       const int uv_idx = (y / 2) * uv_stride + (x / 2);
 
@@ -166,7 +167,8 @@ bool convert_yuv422_packed_frame(const std::vector<const uint8_t*>& planes,
                                  PixelFormat format,
                                  bool is_still,
                                  CameraFrame* preview_frame,
-                                 std::vector<uint8_t>* still_rgb) {
+                                 std::vector<uint8_t>* still_rgb,
+                                 bool rotate_180) {
   if (planes.empty() || bytes_used.empty() || !planes[0]) {
     return false;
   }
@@ -190,7 +192,7 @@ bool convert_yuv422_packed_frame(const std::vector<const uint8_t*>& planes,
     }
 
     const uint8_t* line = src + row_offset;
-    const int dst_y     = height - 1 - y;
+    const int dst_y     = rotate_180 ? height - 1 - y : y;
     for (int x = 0; x < width; x += 2) {
       const uint8_t b0 = line[x * 2];
       const uint8_t b1 = line[x * 2 + 1];
@@ -201,8 +203,8 @@ bool convert_yuv422_packed_frame(const std::vector<const uint8_t*>& planes,
       const uint8_t u  = is_yuyv ? b1 : b0;
       const uint8_t y1 = is_yuyv ? b2 : b3;
       const uint8_t v  = is_yuyv ? b3 : b2;
-      const int dst_x0 = width - 1 - x;
-      const int dst_x1 = width - 2 - x;
+      const int dst_x0 = rotate_180 ? width - 1 - x : x;
+      const int dst_x1 = rotate_180 ? width - 2 - x : x + 1;
 
       auto write_pixel = [&](int dst_x, uint8_t y_value) {
         if (dst_x < 0 || dst_x >= width) {
@@ -383,7 +385,8 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
                               PixelFormat format,
                               bool is_still,
                               CameraFrame* preview_frame,
-                              std::vector<uint8_t>* still_rgb) {
+                              std::vector<uint8_t>* still_rgb,
+                              bool rotate_180) {
   if (planes.empty() || !planes[0] || bytes_used.empty() || width <= 0 || height <= 0) {
     return false;
   }
@@ -396,7 +399,8 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
                                 stride,
                                 is_still,
                                 preview_frame,
-                                still_rgb);
+                                still_rgb,
+                                rotate_180);
   }
   if (format == PixelFormat::YUYV || format == PixelFormat::UYVY) {
     return convert_yuv422_packed_frame(planes,
@@ -407,7 +411,8 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
                                        format,
                                        is_still,
                                        preview_frame,
-                                       still_rgb);
+                                       still_rgb,
+                                       rotate_180);
   }
 
   const bool is_rgb888      = format == PixelFormat::RGB888;
@@ -428,6 +433,22 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
     still_rgb->assign(width * height * 3, 0);
   }
 
+  if (is_rgb565 && !is_still && preview_frame && !rotate_180) {
+    preview_frame->width  = width;
+    preview_frame->height = height;
+    preview_frame->rgb565 =
+        std::make_shared<std::vector<uint16_t>>(static_cast<size_t>(width) * height);
+    auto* dst = reinterpret_cast<uint8_t*>(preview_frame->rgb565->data());
+    for (int y = 0; y < height; ++y) {
+      const size_t offset = static_cast<size_t>(y) * row_stride;
+      if (offset + min_stride > src_size) {
+        return false;
+      }
+      std::memcpy(dst + static_cast<size_t>(y) * min_stride, src + offset, min_stride);
+    }
+    return true;
+  }
+
   for (int y = 0; y < height; ++y) {
     const size_t row_offset = static_cast<size_t>(y) * row_stride;
     if (row_offset + min_stride > src_size) {
@@ -435,9 +456,9 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
     }
 
     const uint8_t* line = src + row_offset;
-    const int dst_y     = height - 1 - y;
+    const int dst_y     = rotate_180 ? height - 1 - y : y;
     for (int x = 0; x < width; ++x) {
-      const int dst_x = width - 1 - x;
+      const int dst_x = rotate_180 ? width - 1 - x : x;
       const int idx   = dst_y * width + dst_x;
       uint8_t r       = 0;
       uint8_t g       = 0;

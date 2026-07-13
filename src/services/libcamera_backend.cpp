@@ -23,6 +23,7 @@
 #include <libcamera/control_ids.h>
 #include <libcamera/formats.h>
 #include <libcamera/framebuffer_allocator.h>
+#include <libcamera/orientation.h>
 #include <libcamera/property_ids.h>
 #include <libcamera/request.h>
 #include <libcamera/stream.h>
@@ -285,6 +286,7 @@ struct LibcameraBackend::Impl {
   int preview_h{kPreviewHeight};
   int preview_stride{kPreviewWidth * 2};
   libcamera::PixelFormat preview_format{libcamera::formats::RGB565};
+  bool hardware_rotation{false};
   int still_w{kDefaultCaptureWidth};
   int still_h{kDefaultCaptureHeight};
   int still_stride{kDefaultCaptureWidth};
@@ -311,6 +313,7 @@ struct LibcameraBackend::Impl {
     }
 
     libcamera::StreamConfiguration& preview_cfg = config->at(0);
+    config->orientation                         = libcamera::Orientation::Rotate180;
     preview_cfg.size.width                      = kPreviewWidth;
     preview_cfg.size.height                     = kPreviewHeight;
     preview_cfg.pixelFormat                     = libcamera::formats::RGB565;
@@ -331,6 +334,9 @@ struct LibcameraBackend::Impl {
                buffer_count);
       return false;
     }
+
+    hardware_rotation = config->orientation == libcamera::Orientation::Rotate180;
+    LOG_INFO("Camera orientation: requested=Rotate180 hardware={}", hardware_rotation);
 
     if (camera->configure(config.get())) {
       last_error = "Camera configure failed";
@@ -372,7 +378,8 @@ struct LibcameraBackend::Impl {
       std::lock_guard<std::mutex> lock(mutex);
       pending_frame.width  = kPreviewWidth;
       pending_frame.height = kPreviewHeight;
-      pending_frame.rgb565.assign(kPreviewWidth * kPreviewHeight, 0);
+      pending_frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
+          kPreviewWidth * kPreviewHeight, 0);
       still_rgb.assign(still_w * still_h * 3, 0);
     }
 
@@ -694,7 +701,7 @@ struct LibcameraBackend::Impl {
     if (!new_frame) {
       return false;
     }
-    frame     = pending_frame;
+    frame     = std::move(pending_frame);
     new_frame = false;
     return true;
   }
@@ -1216,32 +1223,40 @@ struct LibcameraBackend::Impl {
       sync_dma_buf(plane.fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
     }
 
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      const bool converted = convert_frame_to_outputs(plane_data,
+    CameraFrame converted_frame;
+    std::vector<uint8_t> converted_still;
+    const bool converted = convert_frame_to_outputs(plane_data,
                                                       bytes_used,
                                                       width,
                                                       height,
                                                       stride,
                                                       map_libcamera_format(format),
                                                       is_still,
-                                                      is_still ? nullptr : &pending_frame,
-                                                      is_still ? &still_rgb : nullptr);
-      if (converted && is_still) {
-        const ExifMetadata exif_metadata = build_still_exif_metadata(request, width, height);
-        const bool saved =
-            save_jpeg_rgb888(last_capture_path, still_rgb, width, height, 92, &exif_metadata);
+                                                      is_still ? nullptr : &converted_frame,
+                                                      is_still ? &converted_still : nullptr,
+                                                      !hardware_rotation);
+    if (converted && is_still) {
+      std::string capture_path;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        capture_path = last_capture_path;
+      }
+      const ExifMetadata exif_metadata = build_still_exif_metadata(request, width, height);
+      const bool saved =
+          save_jpeg_rgb888(capture_path, converted_still, width, height, 92, &exif_metadata);
+      {
+        std::lock_guard<std::mutex> lock(mutex);
         capture_state = saved ? CaptureState::Saved : CaptureState::Failed;
-      } else if (converted) {
-        pending_frame.width  = width;
-        pending_frame.height = height;
+      }
+    } else if (converted) {
+      std::lock_guard<std::mutex> lock(mutex);
+        pending_frame = std::move(converted_frame);
         new_frame            = true;
         if (video_writer.is_open() &&
             !video_writer.write_rgb565_frame(pending_frame, video_quality)) {
           video_state = VideoState::Failed;
           (void)video_writer.close();
         }
-      }
     }
 
     for (const auto& plane : mapped.planes) {

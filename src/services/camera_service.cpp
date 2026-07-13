@@ -209,7 +209,7 @@ bool CameraService::consume_frame(CameraFrame& frame) {
     return false;
   }
 
-  frame      = latest_frame_;
+  frame      = std::move(latest_frame_);
   new_frame_ = false;
   return true;
 }
@@ -365,10 +365,11 @@ void CameraService::generate_placeholder_frame_() {
   constexpr int width  = kPreviewWidth;
   constexpr int height = kPreviewHeight;
   if (latest_frame_.width != width || latest_frame_.height != height ||
-      latest_frame_.rgb565.size() != static_cast<size_t>(width * height)) {
+      !latest_frame_.rgb565 ||
+      latest_frame_.rgb565->size() != static_cast<size_t>(width * height)) {
     latest_frame_.width  = width;
     latest_frame_.height = height;
-    latest_frame_.rgb565.assign(width * height, 0);
+    latest_frame_.rgb565 = std::make_shared<std::vector<uint16_t>>(width * height, 0);
   }
 
   const uint32_t t = elapsed_ms_ / 16;
@@ -377,7 +378,7 @@ void CameraService::generate_placeholder_frame_() {
       const uint8_t r                     = static_cast<uint8_t>((x + t) & 0xFF);
       const uint8_t g                     = static_cast<uint8_t>((y * 2 + t) & 0xFF);
       const uint8_t b                     = static_cast<uint8_t>((x + y + t * 2) & 0xFF);
-      latest_frame_.rgb565[y * width + x] = rgb888_to_rgb565(r, g, b);
+      (*latest_frame_.rgb565)[y * width + x] = rgb888_to_rgb565(r, g, b);
     }
   }
 

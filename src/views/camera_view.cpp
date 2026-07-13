@@ -121,7 +121,7 @@ void CameraView::set_preview_frame(const service::CameraFrame& frame) {
   }
   freeze_preview_until_ms_ = 0;
 
-  if (!preview_image_ || frame.width <= 0 || frame.height <= 0 || frame.rgb565.empty()) {
+  if (!preview_image_ || !frame.valid()) {
     return;
   }
 
@@ -132,8 +132,8 @@ void CameraView::set_preview_frame(const service::CameraFrame& frame) {
   preview_dsc_.header.w      = static_cast<uint32_t>(frame.width);
   preview_dsc_.header.h      = static_cast<uint32_t>(frame.height);
   preview_dsc_.header.stride = static_cast<uint32_t>(frame.width * sizeof(uint16_t));
-  preview_dsc_.data_size     = static_cast<uint32_t>(preview_buffer_.size() * sizeof(uint16_t));
-  preview_dsc_.data          = reinterpret_cast<const uint8_t*>(preview_buffer_.data());
+  preview_dsc_.data_size     = static_cast<uint32_t>(preview_buffer_->size() * sizeof(uint16_t));
+  preview_dsc_.data          = reinterpret_cast<const uint8_t*>(preview_buffer_->data());
 
   lv_image_set_src(preview_image_, &preview_dsc_);
   lv_obj_invalidate(preview_image_);

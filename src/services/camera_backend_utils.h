@@ -55,6 +55,7 @@ bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
                               PixelFormat format,
                               bool is_still,
                               CameraFrame* preview_frame,
-                              std::vector<uint8_t>* still_rgb);
+                              std::vector<uint8_t>* still_rgb,
+                              bool rotate_180 = true);
 
 }  // namespace service::camera_backend

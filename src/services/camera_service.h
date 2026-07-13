@@ -17,7 +17,14 @@ enum class CameraBackendPreference { Auto, Csi, Usb };
 struct CameraFrame {
   int width{0};
   int height{0};
-  std::vector<uint16_t> rgb565;
+  std::shared_ptr<std::vector<uint16_t>> rgb565;
+
+  bool valid() const {
+    return width > 0 && height > 0 && rgb565 &&
+           rgb565->size() >= static_cast<size_t>(width) * height;
+  }
+  const uint16_t* data() const { return rgb565 ? rgb565->data() : nullptr; }
+  size_t pixel_count() const { return rgb565 ? rgb565->size() : 0; }
 };
 
 struct CameraResolution {

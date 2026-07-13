@@ -571,14 +571,15 @@ bool rgb888_to_scaled_preview_frame(const std::vector<uint8_t>& rgb,
       preview_crop_for_source(src_width, src_height, out_width, out_height, zoom_state);
   frame.width  = out_width;
   frame.height = out_height;
-  frame.rgb565.assign(static_cast<size_t>(out_width) * out_height, 0);
+  frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
+      static_cast<size_t>(out_width) * out_height, 0);
 
   for (int y = 0; y < out_height; ++y) {
     const int src_y = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
     for (int x = 0; x < out_width; ++x) {
       const int src_x      = crop.x + std::min(crop.width - 1, x * crop.width / out_width);
       const size_t src_idx = static_cast<size_t>(src_y * src_width + src_x) * 3;
-      frame.rgb565[static_cast<size_t>(y * out_width + x)] =
+      (*frame.rgb565)[static_cast<size_t>(y * out_width + x)] =
           rgb888_to_rgb565(rgb[src_idx], rgb[src_idx + 1], rgb[src_idx + 2]);
     }
   }
@@ -620,7 +621,8 @@ bool yuv422_to_scaled_preview_frame(const uint8_t* data,
   const bool is_yuyv = pixel_format == V4L2_PIX_FMT_YUYV;
   frame.width        = out_width;
   frame.height       = out_height;
-  frame.rgb565.assign(static_cast<size_t>(out_width) * out_height, 0);
+  frame.rgb565 = std::make_shared<std::vector<uint16_t>>(
+      static_cast<size_t>(out_width) * out_height, 0);
 
   for (int y = 0; y < out_height; ++y) {
     const int src_y     = crop.y + std::min(crop.height - 1, y * crop.height / out_height);
@@ -641,7 +643,7 @@ bool yuv422_to_scaled_preview_frame(const uint8_t* data,
       uint8_t g           = 0;
       uint8_t b           = 0;
       yuv_to_rgb(yy, uu, vv, r, g, b);
-      frame.rgb565[static_cast<size_t>(y * out_width + x)] = rgb888_to_rgb565(r, g, b);
+      (*frame.rgb565)[static_cast<size_t>(y * out_width + x)] = rgb888_to_rgb565(r, g, b);
     }
   }
 
@@ -1122,7 +1124,7 @@ struct V4l2Backend::Impl {
     const int poll_result = poll(&pfd, 1, 0);
     if (poll_result <= 0) {
       if (new_frame) {
-        frame     = latest_frame;
+        frame     = std::move(latest_frame);
         new_frame = false;
         return true;
       }
@@ -1145,7 +1147,7 @@ struct V4l2Backend::Impl {
     if (!converted) {
       return false;
     }
-    frame     = latest_frame;
+    frame     = std::move(latest_frame);
     new_frame = false;
     return true;
   }
@@ -1189,7 +1191,7 @@ struct V4l2Backend::Impl {
     if (!video_writer.is_open()) {
       return;
     }
-    if (!latest_frame.rgb565.empty() &&
+    if (latest_frame.rgb565 && !latest_frame.rgb565->empty() &&
         !video_writer.write_rgb565_frame(latest_frame, video_quality)) {
       video_state = VideoState::Failed;
       (void)video_writer.close();

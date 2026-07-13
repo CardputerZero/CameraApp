@@ -76,7 +76,7 @@ class CameraView : public BaseView {
   // bool shortcut_hints_visible_{false};
   uint32_t freeze_preview_until_ms_{0};
   lv_image_dsc_t preview_dsc_{};
-  std::vector<uint16_t> preview_buffer_;
+  std::shared_ptr<std::vector<uint16_t>> preview_buffer_;
 };
 
 }  // namespace view
