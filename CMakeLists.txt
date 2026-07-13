@@ -6,7 +6,8 @@
 
 cmake_minimum_required(VERSION 3.23)
 
-project(camera_app VERSION 0.2.1 LANGUAGES C CXX)
+set(CAMERA_APP_VERSION "0.2.1" CACHE STRING "CameraApp semantic version")
+project(camera_app VERSION "${CAMERA_APP_VERSION}" LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -130,6 +130,16 @@ cmake --preset cp0-cross -DAPP_USE_DRM=ON
 
 ## Debian 打包
 
+可以通过 `CAMERA_APP_VERSION` 覆盖包版本，无需修改 `CMakeLists.txt`：
+
+```bash
+./package_deb.sh -DCAMERA_APP_VERSION=0.2.2
+```
+
+推送到 `main` 后，`.github/workflows/release.yml` 会读取最新 GitHub Release，将补丁版本号
+自动加一，交叉编译 arm64 Debian 包并发布新的 Release。也可以手动运行 workflow，并输入
+明确的 `MAJOR.MINOR.PATCH` 版本号。
+
 推荐使用仓库内脚本打包，它会调用 CMake preset 构建 `camera_app`，再用 CPack 生成 `.deb`。
 
 ```bash

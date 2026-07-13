@@ -89,6 +89,16 @@ cmake --preset cp0-cross -DAPP_USE_DRM=ON
 
 ## Debian Package
 
+`CAMERA_APP_VERSION` can override the package version without editing `CMakeLists.txt`:
+
+```bash
+./package_deb.sh -DCAMERA_APP_VERSION=0.2.2
+```
+
+Pushes to `main` run `.github/workflows/release.yml`, increment the patch component of the latest
+GitHub Release, build the arm64 Debian package, and publish it as a new Release. The workflow can
+also be run manually with an explicit `MAJOR.MINOR.PATCH` version.
+
 ```bash
 ./package_deb.sh
 ```

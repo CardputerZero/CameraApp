@@ -1,0 +1,152 @@
+name: Build and release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 0.3.0 or v0.3.0); leave empty to increment the latest release patch"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: camera-app-release
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+        run: |
+          set -euo pipefail
+
+          version="${REQUESTED_VERSION#v}"
+          if [[ -z "${version}" ]]; then
+            latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            latest="${latest_tag#v}"
+            if [[ -z "${latest}" ]]; then
+              latest="$(sed -nE 's/^set\(CAMERA_APP_VERSION "([0-9]+\.[0-9]+\.[0-9]+)".*$/\1/p' CMakeLists.txt | head -n1)"
+            fi
+            if [[ ! "${latest}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "Unable to determine a semantic version from latest release: ${latest_tag:-<none>}" >&2
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          fi
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use MAJOR.MINOR.PATCH format, got: ${version}" >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists; choose a different manual version." >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Building CameraApp ${version}"
+
+      - name: Install cross-build tools
+        run: |
+          sudo sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-backports noble-security
+          Components: main universe restricted multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install --yes \
+            cmake \
+            ninja-build \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            pkg-config \
+            dpkg-dev \
+            libfreetype-dev:arm64 \
+            libpng-dev:arm64 \
+            libjpeg-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libasound2-dev:arm64 \
+            libcamera-dev:arm64 \
+            libfmt-dev:arm64 \
+            libcjson-dev:arm64 \
+            libv4l-dev:arm64
+
+      - name: Cache downloaded build dependencies
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: camera-app-cp0-${{ runner.os }}-${{ hashFiles('cmake/toolchains/cp0-aarch64-linux-gnu.cmake', 'CMakeLists.txt') }}
+          restore-keys: |
+            camera-app-cp0-${{ runner.os }}-
+
+      - name: Build arm64 package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./package_deb.sh \
+            -DCAMERA_APP_VERSION="${VERSION}" \
+            -DCM0_SDK_ROOT=/ \
+            -DCMAKE_SYSROOT=/ \
+            -DCM0_ALLOW_FETCH_DEPS=OFF
+
+      - name: Verify package
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          package="dist/Camera_${VERSION}_m5stack1_arm64.deb"
+          test -f "${package}"
+          test "$(dpkg-deb --field "${package}" Architecture)" = "arm64"
+          test "$(dpkg-deb --field "${package}" Version)" = "${VERSION}-m5stack1"
+          dpkg-deb --contents "${package}"
+          (cd dist && sha256sum "$(basename "${package}")" > SHA256SUMS)
+          echo "path=${package}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CameraApp-${{ steps.version.outputs.version }}-arm64
+          path: |
+            ${{ steps.package.outputs.path }}
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          gh release create "${TAG}" \
+            "${PACKAGE}" \
+            dist/SHA256SUMS \
+            --target "${GITHUB_SHA}" \
+            --title "CameraApp ${TAG}" \
+            --generate-notes
