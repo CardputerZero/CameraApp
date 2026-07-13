@@ -46,6 +46,12 @@ bool save_jpeg_rgb888(const std::string& path,
                       int height,
                       int quality                       = 90,
                       const ExifMetadata* exif_metadata = nullptr);
+bool resize_rgb888(const std::vector<uint8_t>& source,
+                   int source_width,
+                   int source_height,
+                   int target_width,
+                   int target_height,
+                   std::vector<uint8_t>& output);
 std::vector<CameraResolution> capture_resolution_candidates(CameraResolution preferred);
 bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,
                               const std::vector<size_t>& bytes_used,

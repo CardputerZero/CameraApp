@@ -14,9 +14,7 @@
 #include "services/jpeg_metadata.h"
 #include "utils/logger.h"
 
-#if !USE_DESKTOP
 #include <jpeglib.h>
-#endif
 
 namespace service::camera_backend {
 namespace {
@@ -290,7 +288,6 @@ bool save_jpeg_rgb888(const std::string& path,
                       int height,
                       int quality,
                       const ExifMetadata* exif_metadata) {
-#if !USE_DESKTOP
   if (rgb.size() < static_cast<size_t>(width * height * 3)) {
     return false;
   }
@@ -341,15 +338,6 @@ bool save_jpeg_rgb888(const std::string& path,
   std::fclose(fp);
   (void)::chmod(path.c_str(), 0644);
   return true;
-#else
-  (void)path;
-  (void)rgb;
-  (void)width;
-  (void)height;
-  (void)quality;
-  (void)exif_metadata;
-  return false;
-#endif
 }
 
 std::vector<CameraResolution> capture_resolution_candidates(CameraResolution preferred) {
@@ -375,6 +363,49 @@ std::vector<CameraResolution> capture_resolution_candidates(CameraResolution pre
   add_unique({1280, 960});
   add_unique({640, 480});
   return candidates;
+}
+
+bool resize_rgb888(const std::vector<uint8_t>& source,
+                   int source_width,
+                   int source_height,
+                   int target_width,
+                   int target_height,
+                   std::vector<uint8_t>& output) {
+  if (source_width <= 0 || source_height <= 0 || target_width <= 0 || target_height <= 0 ||
+      source.size() < static_cast<size_t>(source_width) * source_height * 3) {
+    output.clear();
+    return false;
+  }
+  if (source_width == target_width && source_height == target_height) {
+    output = source;
+    return true;
+  }
+
+  int crop_width = source_width;
+  int crop_height = source_height;
+  if (static_cast<int64_t>(source_width) * target_height >
+      static_cast<int64_t>(source_height) * target_width) {
+    crop_width = std::max(1, source_height * target_width / target_height);
+  } else {
+    crop_height = std::max(1, source_width * target_height / target_width);
+  }
+  const int crop_x = (source_width - crop_width) / 2;
+  const int crop_y = (source_height - crop_height) / 2;
+
+  output.resize(static_cast<size_t>(target_width) * target_height * 3);
+  for (int y = 0; y < target_height; ++y) {
+    const int source_y = crop_y + std::min(crop_height - 1, y * crop_height / target_height);
+    for (int x = 0; x < target_width; ++x) {
+      const int source_x = crop_x + std::min(crop_width - 1, x * crop_width / target_width);
+      const size_t source_offset =
+          (static_cast<size_t>(source_y) * source_width + source_x) * 3;
+      const size_t target_offset = (static_cast<size_t>(y) * target_width + x) * 3;
+      output[target_offset]     = source[source_offset];
+      output[target_offset + 1] = source[source_offset + 1];
+      output[target_offset + 2] = source[source_offset + 2];
+    }
+  }
+  return true;
 }
 
 bool convert_frame_to_outputs(const std::vector<const uint8_t*>& planes,

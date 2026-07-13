@@ -39,6 +39,7 @@ if os.environ.get('CONFIG_CAMERA_APP_USE_DESKTOP') != '1':
 
 INCLUDE = [
     ADir('src'),
+    os.path.join(os.environ['EXT_COMPONENTS_PATH'], 'cp0_lvgl', 'src'),
     os.path.join(os.environ['SDK_PATH'], 'components', 'utilities', 'party', 'fmt', 'include'),
     os.path.join(libv4l_dev_root, 'usr', 'include'),
 ]

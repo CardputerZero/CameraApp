@@ -405,6 +405,7 @@ endif()
 set(APP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(APP_COMMON_INCLUDE_DIRS
     ${APP_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../ext_components/cp0_lvgl/src
     ${LVGL_INCLUDE_PARENT}
     ${LVGL_INCLUDE_DIRS}
     ${APP_DEP_INCLUDE_DIRS}
@@ -414,6 +415,7 @@ set(APP_COMMON_INCLUDE_DIRS
 add_library(${PROJECT_NAME}_utils STATIC
     src/utils/logger.cpp
     src/utils/asset_manager.cpp
+    src/utils/device_config.cpp
     src/utils/json_helper.cpp
 )
 target_include_directories(${PROJECT_NAME}_utils PUBLIC ${APP_COMMON_INCLUDE_DIRS})
@@ -446,7 +448,17 @@ if(CAMERA_APP_BUILD_TESTS)
     enable_testing()
     add_executable(camera_preview_test tests/camera_preview_test.cpp)
     target_include_directories(camera_preview_test PRIVATE ${APP_SOURCE_DIR})
+    target_link_libraries(camera_preview_test PRIVATE
+        ${PROJECT_NAME}_services
+        $<$<BOOL:${USE_DESKTOP}>:${JPEG_TARGET}>
+        $<$<NOT:$<BOOL:${USE_DESKTOP}>>:CM0::JPEG>
+    )
     add_test(NAME camera_preview_test COMMAND camera_preview_test)
+
+    add_executable(device_config_test tests/device_config_test.cpp)
+    target_include_directories(device_config_test PRIVATE ${APP_SOURCE_DIR})
+    target_link_libraries(device_config_test PRIVATE ${PROJECT_NAME}_utils)
+    add_test(NAME device_config_test COMMAND device_config_test)
 endif()
 
 add_library(${PROJECT_NAME}_viewmodels STATIC

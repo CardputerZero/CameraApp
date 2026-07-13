@@ -1273,9 +1273,21 @@ struct LibcameraBackend::Impl {
         std::lock_guard<std::mutex> lock(mutex);
         capture_path = last_capture_path;
       }
-      const ExifMetadata exif_metadata = build_still_exif_metadata(request, width, height);
-      const bool saved =
-          save_jpeg_rgb888(capture_path, converted_still, width, height, 92, &exif_metadata);
+      std::vector<uint8_t> resized_still;
+      const bool resized = resize_rgb888(converted_still,
+                                         width,
+                                         height,
+                                         capture_resolution.width,
+                                         capture_resolution.height,
+                                         resized_still);
+      const ExifMetadata exif_metadata = build_still_exif_metadata(
+          request, capture_resolution.width, capture_resolution.height);
+      const bool saved = resized && save_jpeg_rgb888(capture_path,
+                                                     resized_still,
+                                                     capture_resolution.width,
+                                                     capture_resolution.height,
+                                                     92,
+                                                     &exif_metadata);
       {
         std::lock_guard<std::mutex> lock(mutex);
         capture_state = saved ? CaptureState::Saved : CaptureState::Failed;

@@ -17,7 +17,7 @@
 #include "screens/screen_manager.h"
 #include "services/app_services.h"
 #include "services/preview_frame_limiter.h"
-// #include "utils/json_helper.h"
+#include "utils/device_config.h"
 #include "utils/logger.h"
 #include "viewmodels/camera_viewmodel.h"
 #include "viewmodels/gallery_viewmodel.h"
@@ -343,6 +343,8 @@ int main() {
   }
 
   auto services = service::AppServices::create();
+  const util::CameraResolutionConfig resolution = util::load_camera_resolution_config();
+  services->camera->set_capture_resolution({resolution.width, resolution.height});
   app::AppStateMachine state_machine(app::AppState::Splash);
   screen::ScreenManager manager(lv_scr_act());
   setup_screen_manager(manager, services);

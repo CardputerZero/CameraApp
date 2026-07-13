@@ -538,24 +538,6 @@ bool decompress_mjpeg(const uint8_t* data,
   return true;
 }
 
-bool save_jpeg_bytes(const std::string& path, const uint8_t* data, size_t size) {
-  if (path.empty() || !data || size == 0) {
-    return false;
-  }
-
-  FILE* fp = std::fopen(path.c_str(), "wb");
-  if (!fp) {
-    LOG_ERROR("Failed to open jpeg file: {}", path);
-    return false;
-  }
-  const bool ok = std::fwrite(data, 1, size, fp) == size;
-  std::fclose(fp);
-  if (ok) {
-    (void)::chmod(path.c_str(), 0644);
-  }
-  return ok;
-}
-
 bool rgb888_to_scaled_preview_frame(const std::vector<uint8_t>& rgb,
                                     int src_width,
                                     int src_height,
@@ -1305,26 +1287,48 @@ struct V4l2Backend::Impl {
     }
 
     const auto* data = static_cast<const uint8_t*>(buffers[buf.index].start);
-    if (pixel_format == V4L2_PIX_FMT_MJPEG) {
-      LOG_INFO("Saving V4L2 still MJPEG: {}x{} bytes={} path={}",
-               width,
-               height,
-               buf.bytesused,
-               last_capture_path_value);
-      return save_jpeg_bytes(last_capture_path_value, data, buf.bytesused);
-    }
-
     std::vector<uint8_t> still_rgb;
-    if (!yuv422_to_rgb888(data, buf.bytesused, width, height, stride, pixel_format, still_rgb)) {
+    int source_width = width;
+    int source_height = height;
+    const bool decoded = pixel_format == V4L2_PIX_FMT_MJPEG
+                             ? decompress_mjpeg(data,
+                                               buf.bytesused,
+                                               still_rgb,
+                                               source_width,
+                                               source_height)
+                             : yuv422_to_rgb888(data,
+                                               buf.bytesused,
+                                               width,
+                                               height,
+                                               stride,
+                                               pixel_format,
+                                               still_rgb);
+    if (!decoded) {
       return false;
     }
-    LOG_INFO("Saving V4L2 still JPEG from {}: {}x{} source_bytes={} path={}",
+
+    std::vector<uint8_t> resized_rgb;
+    if (!resize_rgb888(still_rgb,
+                       source_width,
+                       source_height,
+                       capture_resolution.width,
+                       capture_resolution.height,
+                       resized_rgb)) {
+      return false;
+    }
+    LOG_INFO("Saving V4L2 still JPEG from {}: source={}x{} output={}x{} bytes={} path={}",
              v4l2_format_name(pixel_format),
-             width,
-             height,
+             source_width,
+             source_height,
+             capture_resolution.width,
+             capture_resolution.height,
              buf.bytesused,
              last_capture_path_value);
-    return save_jpeg_rgb888(last_capture_path_value, still_rgb, width, height, 95);
+    return save_jpeg_rgb888(last_capture_path_value,
+                            resized_rgb,
+                            capture_resolution.width,
+                            capture_resolution.height,
+                            95);
   }
 
   bool start_video_recording(int fps, int quality) {
