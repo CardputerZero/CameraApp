@@ -405,7 +405,6 @@ endif()
 set(APP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 set(APP_COMMON_INCLUDE_DIRS
     ${APP_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../ext_components/cp0_lvgl/src
     ${LVGL_INCLUDE_PARENT}
     ${LVGL_INCLUDE_DIRS}
     ${APP_DEP_INCLUDE_DIRS}
