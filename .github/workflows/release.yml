@@ -92,8 +92,6 @@ jobs:
             libjpeg-dev:arm64 \
             zlib1g-dev:arm64 \
             libasound2-dev:arm64 \
-            libcamera-dev:arm64 \
-            libfmt-dev:arm64 \
             libcjson-dev:arm64 \
             libv4l-dev:arm64
 
@@ -105,14 +103,46 @@ jobs:
           restore-keys: |
             camera-app-cp0-${{ runner.os }}-
 
+      - name: Prepare CM0 sysroot
+        shell: bash
+        run: |
+          set -euo pipefail
+          sysroot="${GITHUB_WORKSPACE}/.cache/sdk_bsp-src"
+          mkdir -p "${sysroot}"
+
+          if [[ ! -f "${sysroot}/usr/include/libcamera/camera.h" ]]; then
+            curl --fail --location --retry 3 \
+              https://github.com/CardputerZero/M5CardputerZero-UserDemo/releases/download/v0.0.4/sdk_bsp.tar.gz \
+              --output "${RUNNER_TEMP}/sdk_bsp.tar.gz"
+            tar -xf "${RUNNER_TEMP}/sdk_bsp.tar.gz" -C "${sysroot}"
+          fi
+
+          # The BSP contains target runtime libraries but omits several development headers
+          # and unversioned linker names. Add only those files from matching arm64 dev packages.
+          cp -a /usr/include/alsa "${sysroot}/usr/include/"
+          cp -a /usr/include/cjson "${sysroot}/usr/include/"
+          cp -a /usr/include/libv4l*.h "${sysroot}/usr/include/"
+          cp -a /usr/lib/aarch64-linux-gnu/libasound.so "${sysroot}/usr/lib/aarch64-linux-gnu/"
+          cp -a /usr/lib/aarch64-linux-gnu/libcjson.so "${sysroot}/usr/lib/aarch64-linux-gnu/"
+          cp -a /usr/lib/aarch64-linux-gnu/libv4l2.so "${sysroot}/usr/lib/aarch64-linux-gnu/"
+          cp -a /usr/lib/aarch64-linux-gnu/libv4lconvert.so "${sysroot}/usr/lib/aarch64-linux-gnu/"
+
+          if [[ ! -f "${sysroot}/usr/include/fmt/format.h" ]]; then
+            curl --fail --location --retry 3 \
+              https://github.com/fmtlib/fmt/archive/refs/tags/10.1.1.tar.gz \
+              --output "${RUNNER_TEMP}/fmt.tar.gz"
+            tar -xf "${RUNNER_TEMP}/fmt.tar.gz" -C "${RUNNER_TEMP}"
+            cp -a "${RUNNER_TEMP}/fmt-10.1.1/include/fmt" "${sysroot}/usr/include/"
+          fi
+
       - name: Build arm64 package
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./package_deb.sh \
             -DCAMERA_APP_VERSION="${VERSION}" \
-            -DCM0_SDK_ROOT=/ \
-            -DCMAKE_SYSROOT=/ \
+            -DCM0_SDK_ROOT="${GITHUB_WORKSPACE}/.cache/sdk_bsp-src" \
+            -DCMAKE_SYSROOT="${GITHUB_WORKSPACE}/.cache/sdk_bsp-src" \
             -DCM0_ALLOW_FETCH_DEPS=OFF
 
       - name: Verify package
