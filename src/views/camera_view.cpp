@@ -48,20 +48,8 @@ void shortcut_hint_translate_y_anim_cb(void* obj, int32_t value) {
   lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(obj), value, 0);
 }
 
-void flash_opa_anim_cb(void* obj, int32_t value) {
-  lv_obj_set_style_bg_opa(static_cast<lv_obj_t*>(obj), static_cast<lv_opa_t>(value), 0);
-}
-
 void shutter_scale_anim_cb(void* obj, int32_t value) {
   lv_obj_set_style_transform_scale(static_cast<lv_obj_t*>(obj), value, 0);
-}
-
-void flash_hide_ready_cb(lv_anim_t* anim) {
-  auto* obj = static_cast<lv_obj_t*>(lv_anim_get_user_data(anim));
-  if (obj) {
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
-  }
 }
 
 void capture_status_hide_timer_cb(lv_timer_t* timer) {
@@ -110,17 +98,9 @@ void CameraView::build_() {
   zoom_in_icon_ = build_icon_(32, font::ICON_ZOOM_IN, LV_ALIGN_CENTER, 56);
   /* create gallery icon button */
   gallery_icon_ = build_icon_(32, font::ICON_IMAGES, LV_ALIGN_RIGHT_MID, -30);
-
-  build_flash_overlay_();
 }
 
 void CameraView::set_preview_frame(const service::CameraFrame& frame) {
-  if (freeze_preview_until_ms_ &&
-      static_cast<int32_t>(lv_tick_get() - freeze_preview_until_ms_) < 0) {
-    return;
-  }
-  freeze_preview_until_ms_ = 0;
-
   if (!preview_image_ || !frame.valid()) {
     return;
   }
@@ -174,26 +154,6 @@ void CameraView::set_zoom_state(const service::CameraZoomState& state) {
 }
 
 void CameraView::play_capture_feedback() {
-  freeze_preview_until_ms_ = lv_tick_get() + 260;
-
-  if (flash_overlay_) {
-    lv_anim_delete(flash_overlay_, flash_opa_anim_cb);
-    lv_obj_remove_flag(flash_overlay_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(flash_overlay_);
-    lv_obj_set_style_bg_opa(flash_overlay_, LV_OPA_90, 0);
-
-    lv_anim_t flash_anim;
-    lv_anim_init(&flash_anim);
-    lv_anim_set_var(&flash_anim, flash_overlay_);
-    lv_anim_set_values(&flash_anim, LV_OPA_90, LV_OPA_TRANSP);
-    lv_anim_set_duration(&flash_anim, 320);
-    lv_anim_set_exec_cb(&flash_anim, flash_opa_anim_cb);
-    lv_anim_set_path_cb(&flash_anim, lv_anim_path_ease_out);
-    lv_anim_set_user_data(&flash_anim, flash_overlay_);
-    lv_anim_set_completed_cb(&flash_anim, flash_hide_ready_cb);
-    lv_anim_start(&flash_anim);
-  }
-
   if (shutter_icon_.icon_btn) {
     lv_anim_delete(shutter_icon_.icon_btn, shutter_scale_anim_cb);
     lv_anim_t press_anim;
@@ -312,18 +272,6 @@ void CameraView::build_zoom_navigator_() {
   lv_obj_set_style_pad_ver(zoom_label_, 1, 0);
   lv_label_set_text(zoom_label_, "x2.5");
   lv_obj_align(zoom_label_, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
-}
-
-void CameraView::build_flash_overlay_() {
-  flash_overlay_ = lv_obj_create(root_);
-  lv_obj_set_size(flash_overlay_, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(flash_overlay_, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(flash_overlay_, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(flash_overlay_, 0, 0);
-  lv_obj_set_style_radius(flash_overlay_, 0, 0);
-  lv_obj_set_style_pad_all(flash_overlay_, 0, 0);
-  lv_obj_clear_flag(flash_overlay_, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(flash_overlay_, LV_OBJ_FLAG_HIDDEN);
 }
 
 lv_obj_t* CameraView::build_container_(lv_align_t align, size_t width, size_t height) {

@@ -42,7 +42,6 @@ class CameraView : public BaseView {
   void build_bottom_container_();
   void build_preview_();
   void build_zoom_navigator_();
-  void build_flash_overlay_();
 
   void build_icon_shortcut_();
   /* store the icon/keypad button and icon/keypad icon */
@@ -62,7 +61,6 @@ class CameraView : public BaseView {
   lv_obj_t* zoom_navigator_{nullptr};
   lv_obj_t* zoom_viewport_{nullptr};
   lv_obj_t* zoom_label_{nullptr};
-  lv_obj_t* flash_overlay_{nullptr};
   lv_obj_t* capture_status_label_{nullptr};
   lv_timer_t* capture_status_hide_timer_{nullptr};
 
@@ -74,7 +72,6 @@ class CameraView : public BaseView {
 
   lv_obj_t* help_label_{nullptr};
   // bool shortcut_hints_visible_{false};
-  uint32_t freeze_preview_until_ms_{0};
   lv_image_dsc_t preview_dsc_{};
   std::shared_ptr<std::vector<uint16_t>> preview_buffer_;
 };
