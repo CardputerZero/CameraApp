@@ -62,7 +62,7 @@ STATIC_LIB = [
     os.path.join(libv4l_dev_root, 'usr', 'lib', 'aarch64-linux-gnu', 'libv4lconvert.a'),
 ]
 DYNAMIC_LIB = []
-DEFINITIONS = ['-DCAMERA_APP_SCONS_BUILD', '-std=c++17']
+DEFINITIONS = ['-DCAMERA_APP_SCONS_BUILD', '-std=c++17', '-O2']
 DEFINITIONS_PRIVATE = []
 LDFLAGS = ['-Wl,--allow-shlib-undefined']
 LINK_SEARCH_PATH = []
