@@ -86,7 +86,6 @@ lv_display_t* setup_fb_display(const char* fb_device) {
     return nullptr;
   }
 
-  lv_linux_fbdev_set_force_refresh(display, true);
   return display;
 }
 
@@ -258,7 +257,7 @@ void handle_navigation(screen::ScreenManager& manager, app::AppStateMachine& sta
     if (preview_limiter.take(now, frame)) {
       camera_view->set_preview_frame(frame);
       const uint64_t presented = preview_limiter.presented_frames();
-      if (presented % 300 == 0) {
+      if (presented == 1 || presented % 300 == 0) {
         const uint32_t elapsed = now - preview_stats_started_ms;
         LOG_INFO("Preview display stats: presented={} coalesced={} fps={}",
                  presented,
